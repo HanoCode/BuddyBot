@@ -1,4 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- macOS 规范：1024 画布中图形 824x824 居中（缩放 0.8047 + 平移 100） -->
+  <g transform="translate(100,100) scale(0.8047)">
   <!-- 深色圆角底（Godot Dark 风格） -->
   <rect width="1024" height="1024" rx="224" fill="#232a38"/>
 
@@ -24,5 +26,6 @@
   <g fill="#478cbf">
     <rect x="370" y="684" width="44" height="42" rx="12"/>
     <rect x="610" y="684" width="44" height="42" rx="12"/>
+  </g>
   </g>
 </svg>

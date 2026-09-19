@@ -1,0 +1,63 @@
+/**
+ * 英文词典 · tokens 页面分片。key = 中文原文。
+ */
+export const en: Record<string, string> = {
+  "1 天": "1 day",
+  "3 天": "3 days",
+  "近 7 天": "Last 7 days",
+  "近 30 天": "Last 30 days",
+  "全部为网关记录的真实 usage 聚合 · 输入 / 输出按请求拆分裂算":
+    "Aggregated from real gateway usage, split into input/output per request",
+  "刷新": "Refresh",
+  "导出": "Export",
+  "汇总统计": "Aggregating stats",
+  "合计 Token": "Total Tokens",
+  "输入 {a} · 输出 {b}": "Input {a} · Output {b}",
+  "日均": "Daily avg",
+  "峰值 {a} · {b}": "Peak {a} · {b}",
+  "窗口内无请求": "No requests in window",
+  "今日": "Today",
+  "今日 {a} 次请求": "Today {a} requests",
+  "请求数": "Requests",
+  "活跃 {a} 天": "Active {a} days",
+  "会话": "Sessions",
+  "按请求携带的 session_id 去重": "Deduplicated by session_id per request",
+  "成功率": "Success rate",
+  "失败 {a} 次": "Failed {a} times",
+  "平均延迟": "Avg latency",
+  "P90 {a}ms · P99 {b}ms": "P90 {a}ms · P99 {b}ms",
+  "窗口内没有请求记录": "No request records in this window",
+  "启动网关并调用 /v1/chat/completions（或使用「聊天测试」页）后，这里会显示真实的 token 与延迟分布。":
+    "After starting the gateway and calling /v1/chat/completions (or using the Chat Test page), real token and latency distribution will show here.",
+  "用量分布": "Usage distribution",
+  "按调用密钥聚合（密钥是唯一真实的归属维度）":
+    "Aggregated by calling key (the key is the only real ownership dimension)",
+  "暂无密钥用量": "No key usage yet",
+  "{a} 次 · 均 {b}ms": "{a} requests · avg {b}ms",
+  "{a} token": "{a} token",
+  "{a} · {b} 次": "{a} · {b} requests",
+  " · 失败 {a}": " · Failed {a}",
+  "日活分布": "Daily active distribution",
+  "20 分钟粒度 · 颜色越深 token 越多（悬停查看）":
+    "20-minute granularity · darker color means more tokens (hover to view)",
+  "少": "Low",
+  "多": "High",
+  "{a} {b}:{c} · {d} token": "{a} {b}:{c} · {d} token",
+  "0–24 时分布 · 按模型": "0–24h distribution · by model",
+  "各模型按时段的真实 token 量（纵轴按各自峰值归一）":
+    "Real token volume per model by time slot (y-axis normalized to each model's peak)",
+  "每日模型用量比例": "Daily model usage ratio",
+  "x=日期（最新在右）· y=当日 Token · 颜色=模型":
+    "x=Date (latest on right) · y=Today's Token · color=Model",
+  "今天": "Today",
+  "窗口内请求总数": "Total requests in window",
+  "{a} 次": "{a} requests",
+  "首字节 / 总延迟": "First byte / total latency",
+  "最大单次请求": "Max single request",
+  "单次请求 Token 分布": "Single-request Token distribution",
+  "各模型 P50 / P90 单次请求 token 量（上限按窗口内最大 P90 归一）":
+    "Per-model P50/P90 single-request token volume (upper bound normalized to max P90 in window)",
+  "深色 = P50 · 浅色 = P90": "Dark = P50 · Light = P90",
+  "暂无模型用量": "No model usage yet",
+  "P50 {a} · P90 {b} · 均 {c}": "P50 {a} · P90 {b} · avg {c}",
+};

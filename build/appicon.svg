@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- 深色圆角底（Godot Dark 风格） -->
+  <rect width="1024" height="1024" rx="224" fill="#232a38"/>
+
+  <!-- 机器头主体：三顶凸 + 圆润侧脸 -->
+  <g fill="#478cbf">
+    <circle cx="344" cy="352" r="76"/>
+    <circle cx="512" cy="322" r="84"/>
+    <circle cx="680" cy="352" r="76"/>
+    <rect x="252" y="340" width="520" height="440" rx="170"/>
+  </g>
+
+  <!-- 眼睛：白底 + 深瞳 -->
+  <circle cx="392" cy="560" r="84" fill="#ffffff"/>
+  <circle cx="632" cy="560" r="84" fill="#ffffff"/>
+  <circle cx="392" cy="560" r="38" fill="#232a38"/>
+  <circle cx="632" cy="560" r="38" fill="#232a38"/>
+
+  <!-- 鼻槽：竖向圆角槽，连接嘴部 -->
+  <rect x="488" y="580" width="48" height="132" rx="24" fill="#232a38"/>
+
+  <!-- 嘴部：深色开口 + 顶部垂齿 -->
+  <rect x="330" y="684" width="364" height="64" rx="30" fill="#232a38"/>
+  <g fill="#478cbf">
+    <rect x="370" y="684" width="44" height="42" rx="12"/>
+    <rect x="610" y="684" width="44" height="42" rx="12"/>
+  </g>
+</svg>

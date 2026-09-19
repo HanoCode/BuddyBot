@@ -1,0 +1,88 @@
+/* ============================================================
+   WorkBuddy Desktop — Design Tokens
+   对应 docs/UI-DESIGN.md，深浅双主题
+   ============================================================ */
+:root {
+  color-scheme: light; /* 原生控件（数字框上下箭头/下拉/滚动条）跟随浅色主题 */
+  --font: "Inter", "PingFang SC", "Microsoft YaHei UI", system-ui, -apple-system, sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+
+  --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-xl: 20px;
+
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Light */
+  --bg: #F4F5F8;
+  --surface: #FFFFFF;
+  --surface-2: #F8F9FB;
+  --surface-3: #EEF0F4;
+  --outline: #E4E7EC;
+  --outline-2: #D5DAE2;
+  /* 兼容别名：历史代码中多处使用 --border，统一指向描边色 */
+  --border: var(--outline);
+  --text-1: #171A23;
+  --text-2: #5C6370;
+  --text-3: #9AA1AD;
+
+  --primary: #6366F1;
+  --primary-h: #4F52E0;
+  --primary-soft: rgba(99, 102, 241, 0.10);
+  --accent: #FF6B4A;
+  --accent-soft: rgba(255, 107, 74, 0.12);
+  --green: #10B981;  --green-soft: rgba(16,185,129,.12);
+  --amber: #F59E0B;  --amber-soft: rgba(245,158,11,.14);
+  --red:   #EF4444;  --red-soft:   rgba(239,68,68,.12);
+  --blue:  #3B82F6;  --blue-soft:  rgba(59,130,246,.12);
+
+  --sidebar-bg: #15171F;
+  --sidebar-hover: rgba(255,255,255,.06);
+  --sidebar-active: rgba(99,102,241,.22);
+  --sidebar-text: rgba(235,238,245,.60);
+  --sidebar-text-hi: #F2F4F9;
+
+  --shadow-1: 0 1px 2px rgba(16,20,31,.05), 0 2px 8px rgba(16,20,31,.05);
+  --shadow-2: 0 2px 6px rgba(16,20,31,.06), 0 10px 28px rgba(16,20,31,.09);
+  --titlebar-bg: rgba(255,255,255,.78);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark; /* 原生控件箭头/滚动条跟随深色主题（否则数字框上下箭头不可见） */
+  --bg: #0C0E13;
+  --surface: #151823;
+  --surface-2: #191D29;
+  --surface-3: #20242F;
+  --outline: #262B38;
+  --outline-2: #303647;
+  --text-1: #E9ECF3;
+  --text-2: #9AA3B5;
+  --text-3: #5D6577;
+
+  --primary-soft: rgba(99, 102, 241, 0.16);
+  --accent-soft: rgba(255, 107, 74, 0.16);
+
+  --sidebar-bg: #0F1219;
+  --sidebar-hover: rgba(255,255,255,.05);
+  --sidebar-active: rgba(99,102,241,.26);
+
+  --shadow-1: 0 1px 2px rgba(0,0,0,.3), 0 2px 8px rgba(0,0,0,.25);
+  --shadow-2: 0 2px 6px rgba(0,0,0,.35), 0 10px 28px rgba(0,0,0,.4);
+  --titlebar-bg: rgba(15,18,25,.8);
+}
+
+/* ============================================================
+   强调色预设（应用内主题系统 · 浅/深主题通用）
+   html 上写 data-accent="ocean|emerald|violet|rose|amber" 即生效；
+   不写或写 indigo 时保持默认靛蓝主色族。
+   ============================================================ */
+[data-accent="ocean"]   { --primary:#3B82F6; --primary-h:#2563EB; --primary-soft:rgba(59,130,246,.10); }
+[data-accent="emerald"] { --primary:#10B981; --primary-h:#059669; --primary-soft:rgba(16,185,129,.10); }
+[data-accent="violet"]  { --primary:#8B5CF6; --primary-h:#7C3AED; --primary-soft:rgba(139,92,246,.10); }
+[data-accent="rose"]    { --primary:#F43F5E; --primary-h:#E11D48; --primary-soft:rgba(244,63,94,.10); }
+[data-accent="amber"]   { --primary:#F59E0B; --primary-h:#D97706; --primary-soft:rgba(245,158,11,.12); }
+
+[data-theme="dark"][data-accent="ocean"]   { --primary-soft:rgba(59,130,246,.16); }
+[data-theme="dark"][data-accent="emerald"] { --primary-soft:rgba(16,185,129,.16); }
+[data-theme="dark"][data-accent="violet"]  { --primary-soft:rgba(139,92,246,.16); }
+[data-theme="dark"][data-accent="rose"]    { --primary-soft:rgba(244,63,94,.16); }
+[data-theme="dark"][data-accent="amber"]   { --primary-soft:rgba(245,158,11,.18); }

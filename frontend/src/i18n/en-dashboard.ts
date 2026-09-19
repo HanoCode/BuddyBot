@@ -1,0 +1,86 @@
+/**
+ * 英文词典 · dashboard 页面分片。key = 中文原文。
+ */
+export const en: Record<string, string> = {
+  "近 7 天": "Last 7 days",
+  "近 30 天": "Last 30 days",
+
+  "网关已停止": "Gateway stopped",
+  "客户端请求将全部失败": "All client requests will fail",
+  "网关已启动": "Gateway started",
+  "停止失败": "Failed to stop",
+  "启动失败": "Failed to start",
+
+  "仪表盘": "Dashboard",
+  "账号池与网关运行总览 · 每 30 秒自动刷新": "Account pool & gateway overview · auto-refresh every 30s",
+  " · 统计口径取近 {n} 天真实记录": " · stats based on the last {n} days of real records",
+  "刷新": "Refresh",
+  "停止网关": "Stop gateway",
+  "启动网关": "Start gateway",
+
+  "在线账号": "Online accounts",
+  "网关停止": "Gateway stopped",
+  "监听 {addr}": "Listening on {addr}",
+  "池内可用率 {p}%": "Pool availability {p}%",
+  "凭证目录暂无账号": "No accounts in credential directory",
+
+  "请求量": "Requests",
+  "累计 ": "Total ",
+  "今日": "today",
+  "活跃 {d} 天 · 日均 {a} 次": "Active {d} days · avg {a} per day",
+
+  "Token 消耗": "Token usage",
+  "峰值 {d}": "Peak {d}",
+  "窗口内合计 {a}K · 输入 {b}K / 输出 {c}K": "Window total {a}K · input {b}K / output {c}K",
+
+  "账号积分余额": "Account credit balance",
+  "{n} 个账号暂无余额来源：本应用未接入上游余额接口": "{n} accounts have no balance source: this app is not connected to the upstream balance API",
+  "{a} 个账号中 {b} 个有真实余额": "{b} of {a} accounts have real balance",
+
+  "调用趋势": "Usage trend",
+  "近 {d} 天真实请求量与 Token 消耗（无数据的日期按 0 显示）": "Real requests and Token usage over the last {d} days (dates with no data shown as 0)",
+  "暂无请求记录": "No requests yet",
+  "网关尚未处理过请求。启动网关后用任意客户端（或在「聊天测试」页）发一次请求，这里会出现真实曲线。": "The gateway hasn't processed any requests yet. Start the gateway and send a request from any client (or the Chat Test page) and real curves will appear here.",
+
+  "账号池状态": "Account pool status",
+  "{n} 个账号 · 来源为凭证目录下的凭证文件": "{n} accounts · sourced from credential files in the credential directory",
+  "在线可用": "Online available",
+  "正常承接请求": "Serving requests normally",
+  "冷却中": "Cooling down",
+  "熔断 / 限速恢复中": "Recovering from circuit break / rate limit",
+  "已禁用": "Disabled",
+  "手动停用": "Manually disabled",
+  "Token 过期": "Token expired",
+  "需要重新授权": "Re-authorization required",
+  "有效期未知": "Expiry unknown",
+  "凭证未提供 expiresAt": "Credential does not provide expiresAt",
+  "{n} 个账号 access token 已过期，请刷新凭证或重新授权": "{n} accounts' access token has expired, please refresh credentials or re-authorize",
+
+  "最近任务": "Recent tasks",
+  "任务流水（跟随 task:completed 事件实时刷新）": "Task log (refreshes in real time with the task:completed event)",
+  "查看全部": "View all",
+  "暂无任务记录": "No task records yet",
+  "定时任务或手动触发后会在这里留下真实执行结果。": "Scheduled or manually triggered tasks will leave real execution results here.",
+
+  "系统健康": "System health",
+  "网关已运行 {u}": "Gateway running for {u}",
+  "网关未运行": "Gateway not running",
+  " · 进程已运行 {p}": " · process running for {p}",
+  "成功率": "Success rate",
+  "错误请求": "Error requests",
+  "平均延迟": "Avg latency",
+  "P90 延迟": "P90 latency",
+  "在途请求": "In-flight requests",
+  "内存占用": "Memory usage",
+  "{n} 次": "{n} times",
+  "全部指标为运行时真实采样（内存 / 协程 / 延迟分位）": "All metrics are real-time runtime samples (memory / goroutines / latency percentiles)",
+
+  "每日签到": "Daily check-in",
+  "猫猫旅行": "Cat travel",
+  "token 保活": "token keep-alive",
+  "成功": "Success",
+  "失败": "Failed",
+  "跳过": "Skipped",
+  "手动": "Manual",
+  "排程": "Scheduled",
+};

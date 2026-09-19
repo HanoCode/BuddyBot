@@ -1,0 +1,58 @@
+# ============================================================
+# BuddyBot (workbuddy-desktop) .gitignore
+# 原则：只提交源码与构建配置；产物、缓存、凭据一律不进仓库
+# ============================================================
+
+# ---- 构建产物 ----
+# wails3 默认输出目录（build/bin）
+build/bin/
+# sbin/package.sh 的输出目录（BuddyBot.app / *.zip / 便携 exe）
+bin/
+# 安装包与二进制（兜底，防止被改路径后漏提交）
+*.exe
+*.dmg
+*.pkg
+*.msi
+*.app
+*.app.zip
+
+# ---- 前端 ----
+node_modules/
+dist/
+# Vite/TS 构建缓存与覆盖率
+*.tsbuildinfo
+coverage/
+
+# ---- 任务缓存 ----
+# task（Taskfile）运行缓存：.task/checksum 等
+.task/
+
+# ---- 运行时数据与凭据（绝不入库）----
+# 本地账号凭据 JSON（0600）
+auths/
+# 本地运行时产生的数据目录
+data/
+logs/
+*.log
+
+# ---- 环境变量 ----
+.env
+.env.local
+.env.*.local
+
+# ---- Go ----
+*.test
+*.out
+coverage.out
+coverage.html
+
+# ---- IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- OS ----
+.DS_Store
+Thumbs.db

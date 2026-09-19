@@ -1,0 +1,93 @@
+# 发布流水线：push tag（v*）触发
+#
+# 产物命名与 internal/api/system.go pickUpdateAsset 的匹配规则对应：
+#   BuddyBot-darwin-arm64.zip            macOS .app 包（应用内自动更新）
+#   BuddyBot-darwin-amd64.zip
+#   BuddyBot-windows-amd64.exe           Windows 便携 exe（应用内自动更新）
+#   checksums.txt                        全部产物的 sha256（下载后强校验）
+#
+# 版本号唯一来源 = git tag，经 APP_VERSION → ldflags 注入 internal/api.appVersion。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, goos: darwin, goarch: arm64 }
+          - { os: macos-13, goos: darwin, goarch: amd64 }
+          - { os: windows-2022, goos: windows, goarch: amd64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install wails3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.23
+
+      - name: Compute version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Build macOS .app
+        if: matrix.goos == 'darwin'
+        run: |
+          wails3 task darwin:package ARCH=${{ matrix.goarch }} APP_VERSION=${{ env.VERSION }}
+          ditto -c -k --sequesterRsrc --keepParent \
+            bin/BuddyBot.app "bin/BuddyBot-darwin-${{ matrix.goarch }}.zip"
+
+      - name: Build Windows portable exe
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          wails3 task windows:build APP_VERSION=${{ env.VERSION }}
+          Copy-Item bin/BuddyBot.exe bin/BuddyBot-windows-amd64.exe
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: assets-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            bin/BuddyBot-darwin-*.zip
+            bin/BuddyBot-windows-*.exe
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd artifacts
+          sha256sum BuddyBot-* | tee checksums.txt
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            artifacts/*

@@ -10,6 +10,7 @@ import { confirmDialog, toast } from "../components/common/Feedback";
 import { EmptyBlock, ErrorBlock, LoadingBlock } from "../components/common/StateBlock";
 import { broadcastRefresh, errText, useAsync } from "../hooks/useAsync";
 import { ACCENTS, useAccent, useTheme } from "../hooks/useTheme";
+import { getCloseBehavior, setCloseBehavior, type CloseBehavior } from "../hooks/useCloseBehavior";
 import { setLang, t, useLang, useT } from "../i18n";
 import type {
   AccountBackup, AwakeStatus, BackupItem, DataMigrationDiag, GatewayConfig, InjectConfig, InjectStatus,
@@ -256,12 +257,19 @@ function GeneralSection() {
   const t = useT();
   const [theme, toggleTheme] = useTheme();
   const [accent, setAccent] = useAccent();
+  const [closeBehavior, setCloseBehaviorState] = useState<CloseBehavior>(getCloseBehavior());
 
   const change = (next: "zh" | "en") => {
     if (next === lang) return;
     setLang(next);
     toast.success(next === "zh" ? t("已切换为中文界面") : t("已切换为英文界面"));
   };
+
+  const closeBehaviorOpts: { id: CloseBehavior; label: string }[] = [
+    { id: "ask", label: t("每次询问") },
+    { id: "tray", label: t("最小化到托盘") },
+    { id: "quit", label: t("退出程序") },
+  ];
 
   return (
     <div className="card set-group">
@@ -306,6 +314,19 @@ function GeneralSection() {
                   outline: "2px solid var(--outline)", outlineOffset: 1,
                 }}
               />
+            ))}
+          </div>
+        </SetItem>
+        <SetItem title={t("关闭按钮行为")} desc={t("点击窗口关闭按钮时的动作；选「退出程序」时仍会弹窗确认")}>
+          <div className="seg">
+            {closeBehaviorOpts.map((o) => (
+              <button
+                key={o.id}
+                className={closeBehavior === o.id ? "on" : ""}
+                onClick={() => { setCloseBehavior(o.id); setCloseBehaviorState(o.id); }}
+              >
+                {o.label}
+              </button>
             ))}
           </div>
         </SetItem>

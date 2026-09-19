@@ -42,7 +42,12 @@ body {
 }
 .shell.collapsed .titlebar { --sb-w: 68px; }
 .traffic { display: flex; gap: 8px; flex: none; --wails-draggable: no-drag; }
-.tl { width: 12px; height: 12px; border-radius: 50%; }
+.traffic.win { margin-left: 6px; }
+/* 自绘红绿灯：span → button，hover 显示窗口控制符号（对齐 macOS 原生交互） */
+.tl { width: 12px; height: 12px; border-radius: 50%; border: none; padding: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; color: rgba(0, 0, 0, 0.6); }
+.tl svg { opacity: 0; transition: opacity 0.12s ease; }
+.tl:hover svg { opacity: 1; }
+.tl:active { filter: brightness(0.82); }
 .tl-r { background: #FF5F57; } .tl-y { background: #FEBC2E; } .tl-g { background: #28C840; }
 
 .tb-fold { flex: none; width: 26px; height: 26px; }
@@ -87,6 +92,14 @@ body {
 .tb-check:hover { background: var(--surface-3); color: var(--text-1); }
 .tb-check:active { transform: scale(.97); }
 .tb-check:disabled { opacity: .6; cursor: default; }
+/* 立即更新（标题栏）：发现新版本时替换「检查更新」，实色主色 + 呼吸光晕 */
+.tb-check.tb-update {
+  background: var(--primary-soft); color: var(--primary); font-weight: 600;
+  animation: update-pulse 2.2s ease-in-out infinite;
+}
+.tb-check.tb-update:hover { background: var(--primary-soft); color: var(--primary); }
+.tb-check.tb-update:disabled { opacity: .75; }
+@media (prefers-reduced-motion: reduce) { .tb-check.tb-update { animation: none; } }
 /* 语言切换：标题栏分段控件（中 / EN），当前语言高亮 */
 .lang-switch {
   flex: none; height: 28px; padding: 0 3px; border-radius: 7px;
@@ -809,6 +822,20 @@ textarea.input { height: auto; padding: 10px 12px; resize: none; }
   background: var(--surface-2);
 }
 .dlg-foot .foot-left { margin-right: auto; }
+
+/* 关闭询问弹窗（CloseAskDialog）：托盘 / 退出 二选一选项卡 + 记住选择 */
+.close-ask-body { display: flex; flex-direction: column; gap: 9px; }
+.close-opt {
+  display: flex; flex-direction: column; gap: 4px; text-align: left;
+  padding: 11px 13px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--outline); background: var(--surface-2); color: var(--text-1);
+}
+.close-opt:hover { border-color: var(--primary); }
+.close-opt.on { border-color: var(--primary); background: var(--primary-soft); box-shadow: 0 0 0 1px var(--primary) inset; }
+.close-opt strong { font-size: 13px; font-weight: 650; }
+.close-opt span { font-size: 11.8px; color: var(--text-2); line-height: 1.5; }
+.close-remember { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2); cursor: pointer; margin-top: 2px; }
+.close-remember input { accent-color: var(--primary); cursor: pointer; }
 
 /* 全局 Tooltip（data-tip 属性驱动，单例浮层 fixed 定位，见 components/common/tooltip.ts） */
 .app-tip {

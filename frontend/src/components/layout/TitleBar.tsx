@@ -1,13 +1,16 @@
-import { Moon, Search, Sun, RefreshCw, Power, RotateCw, ChevronDown, Settings, CircleArrowUp, Loader2, PanelLeftClose, PanelLeftOpen, Languages, Puzzle } from "lucide-react";
+import { Moon, Search, Sun, RefreshCw, Power, RotateCw, ChevronDown, Settings, CircleArrowUp, Loader2, PanelLeftClose, PanelLeftOpen, Languages, Puzzle, X, Minus, Plus, Download } from "lucide-react";
+import { Application, Window } from "@wailsio/runtime";
 import { useTheme } from "../../hooks/useTheme";
+import { getCloseBehavior } from "../../hooks/useCloseBehavior";
 import { errText } from "../../hooks/useAsync";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { gatewayApi, injectApi, systemApi } from "../../services/api";
-import { toast } from "../common/Feedback";
+import { gatewayApi, injectApi, systemApi, IS_WAILS } from "../../services/api";
+import { confirmDialog, toast } from "../common/Feedback";
+import CloseAskDialog from "./CloseAskDialog";
 import { EVENT, onEvent } from "../../services/events";
 import { setLang, useLang, useT } from "../../i18n";
-import type { GatewayStatus, InjectStatus } from "../../types";
+import type { GatewayStatus, InjectStatus, UpdateInfo } from "../../types";
 
 interface Props {
   collapsed: boolean;
@@ -25,6 +28,11 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
   const [busy, setBusy] = useState(false);
   const [spinning, setSpinning] = useState(false);
   const [checking, setChecking] = useState(false);
+  // 更新状态：手动检查 / 后台定期扫描（update:available）都会写入，
+  // 命中新版本时顶部按钮变为「立即更新」
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [upStage, setUpStage] = useState<{ stage: string; percent: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const go = useNavigate();
   const { pathname } = useLocation();
@@ -121,6 +129,7 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
     setChecking(true);
     try {
       const res = await systemApi.checkUpdate();
+      setUpdate(res.hasUpdate ? res : null);
       if (res.hasUpdate) toast.info(t("发现新版本 {v}", { v: res.latest ?? "" }), res.note);
       else toast.success(res.note || t("已是最新版本"));
     } catch (e) {
@@ -130,7 +139,86 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
     }
   };
 
+  // 后台定期扫描命中新版本：顶部按钮同步变为「立即更新」
+  useEffect(() => {
+    return onEvent(EVENT.updateAvailable, (data) => {
+      const info = data as UpdateInfo | null;
+      if (info?.hasUpdate) setUpdate(info);
+    });
+  }, []);
+
+  // 立即更新：下载（带进度）→ 校验后自动替换重启；与设置→关于同一后端链路
+  const doUpdate = async () => {
+    if (updating || !update?.downloadUrl) return;
+    setUpdating(true);
+    try {
+      const path = await systemApi.downloadUpdate(update.downloadUrl);
+      if (update.autoInstall) {
+        toast.info(t("即将退出并安装更新"), t("安装完成后应用会自动重启"));
+        await systemApi.installUpdate(path);
+        return;
+      }
+      toast.success(t("安装包已下载"), path);
+    } catch (e) {
+      toast.error(update.autoInstall ? t("自动更新失败") : t("下载失败"), errText(e));
+    } finally {
+      setUpdating(false);
+      setUpStage(null);
+    }
+  };
+
+  // 更新下载进度：仅更新期间订阅，展示在标题栏按钮上
+  useEffect(() => {
+    if (!updating) return;
+    return onEvent(EVENT.updateProgress, (data) => {
+      const p = data as { stage?: string; percent?: number };
+      if (typeof p?.stage !== "string") return;
+      setUpStage({ stage: p.stage, percent: Math.min(100, Math.max(0, Math.round(p.percent ?? 0))) });
+    });
+  }, [updating]);
+
   const isMac = navigator.platform.toLowerCase().includes("mac");
+
+  // ---------- 窗口控制（无边框窗口的自绘红绿灯） ----------
+  const [closeAsk, setCloseAsk] = useState(false);
+
+  // 关闭：按偏好执行 —— tray 直接隐藏；quit 弹窗确认后退出；ask 弹窗询问
+  const handleClose = async () => {
+    if (!IS_WAILS) return;
+    const b = getCloseBehavior();
+    if (b === "tray") {
+      void Window.Hide();
+      return;
+    }
+    if (b === "quit") {
+      const ok = await confirmDialog({
+        title: t("退出 BuddyBot？"),
+        desc: t("退出后将停止网关、注入与所有后台任务。"),
+        danger: true,
+        confirmText: t("退出程序"),
+      });
+      if (ok) Application.Quit();
+      return;
+    }
+    setCloseAsk(true);
+  };
+
+  const minimise = () => IS_WAILS && void Window.Minimise();
+  const toggleMaximise = () => IS_WAILS && void Window.ToggleMaximise();
+
+  const trafficLights = (
+    <div className="traffic">
+      <button className="tl tl-r" aria-label={t("关闭")} data-tip={t("关闭")} onClick={() => void handleClose()}>
+        <X size={9} strokeWidth={2.6} />
+      </button>
+      <button className="tl tl-y" aria-label={t("最小化")} data-tip={t("最小化")} onClick={minimise}>
+        <Minus size={9} strokeWidth={2.6} />
+      </button>
+      <button className="tl tl-g" aria-label={t("最大化")} data-tip={t("最大化")} onClick={toggleMaximise}>
+        <Plus size={9} strokeWidth={2.6} />
+      </button>
+    </div>
+  );
 
   // 折叠按钮：紧邻红绿灯，与双击标题折叠等效
   const foldBtn = (
@@ -147,8 +235,25 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
     </button>
   );
 
-  // 检查更新：占据原标题的位置（红绿灯/折叠按钮之后）
-  const checkBtn = (
+  // 检查更新：占据原标题的位置（红绿灯/折叠按钮之后）；
+  // 发现新版本时变为高亮「立即更新」，点击走下载→校验→自动替换重启
+  const checkBtn = update?.hasUpdate && update.downloadUrl ? (
+    <button
+      className="tb-check tb-update"
+      data-tip={update.autoInstall ? t("下载、校验后自动替换并重启") : update.note}
+      disabled={updating}
+      onClick={() => void doUpdate()}
+    >
+      {updating ? <Loader2 size={13} strokeWidth={2.2} className="spin" /> : <Download size={13} strokeWidth={2.2} />}
+      {updating
+        ? upStage?.stage === "downloading"
+          ? `${t("下载中")} ${upStage.percent}%`
+          : t("更新中…")
+        : update.autoInstall
+          ? t("立即更新")
+          : t("去下载新版本")}
+    </button>
+  ) : (
     <button
       className="tb-check"
       data-tip={t("检查更新")}
@@ -168,11 +273,7 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
     <div className="titlebar">
       {isMac ? (
         <div className="tb-left">
-          <div className="traffic">
-            <span className="tl tl-r" />
-            <span className="tl tl-y" />
-            <span className="tl tl-g" />
-          </div>
+          {trafficLights}
           {foldBtn}
           {checkBtn}
         </div>
@@ -267,7 +368,31 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
             <Moon size={15} strokeWidth={2} />
           )}
         </button>
+        {!isMac && (
+          // Windows/Linux 无边框窗口：窗口控制置于标题栏右侧（系统惯例）
+          <div className="traffic win">
+            <button className="tl tl-y" aria-label={t("最小化")} onClick={minimise}>
+              <Minus size={10} strokeWidth={2.4} />
+            </button>
+            <button className="tl tl-g" aria-label={t("最大化")} onClick={toggleMaximise}>
+              <Plus size={10} strokeWidth={2.4} />
+            </button>
+            <button className="tl tl-r" aria-label={t("关闭")} onClick={() => void handleClose()}>
+              <X size={10} strokeWidth={2.4} />
+            </button>
+          </div>
+        )}
       </div>
+
+      <CloseAskDialog
+        open={closeAsk}
+        onCancel={() => setCloseAsk(false)}
+        onDecide={(b) => {
+          setCloseAsk(false);
+          if (b === "tray") void Window.Hide();
+          else void handleClose(); // quit 路径复用确认弹窗
+        }}
+      />
     </div>
   );
 }

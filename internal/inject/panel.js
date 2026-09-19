@@ -724,7 +724,7 @@
     avatarSel = { type: "official" }; // 首次使用 / 非法值：不覆盖官方头像
   }
 
-  var AVATAR_TARGET_SEL = ".user-menu-trigger-avatar"; // WorkBuddy 用户菜单头像容器
+  var AVATAR_TARGET_SEL = ".user-menu-trigger-avatar, .cr-agent .cr-agent__logo"; // 用户菜单头像 + 对话消息机器人头像（内联 SVG）
   var avatarOrigURL = null; // 首次捕获的官方头像（面板卡片预览用）
 
   function avatarURL(sel) {
@@ -748,6 +748,9 @@
       imgs[i].setAttribute("data-wbdesk-orig", "1");
       if (avatarOrigURL == null) avatarOrigURL = imgs[i].getAttribute("src") || "";
     }
+    // 对话消息头像（.cr-agent__logo）是内联 SVG 而非 <img>，同样标记以便隐藏/还原
+    var svgs = wrap.querySelectorAll("svg:not([data-wbdesk-orig])");
+    for (var s = 0; s < svgs.length; s++) svgs[s].setAttribute("data-wbdesk-orig", "1");
   }
 
   function restoreAvatarDom() {
@@ -756,10 +759,10 @@
       var wrap = wraps[w];
       var apps = wrap.querySelectorAll("img[data-wbdesk-avatar-app]");
       for (var a = 0; a < apps.length; a++) apps[a].remove();
-      var imgs = wrap.querySelectorAll("img[data-wbdesk-orig]");
-      for (var b = 0; b < imgs.length; b++) {
-        imgs[b].style.visibility = "";
-        imgs[b].removeAttribute("data-wbdesk-orig");
+      var origs = wrap.querySelectorAll("[data-wbdesk-orig]");
+      for (var b = 0; b < origs.length; b++) {
+        origs[b].style.visibility = "";
+        origs[b].removeAttribute("data-wbdesk-orig");
       }
       if (wrap.style.backgroundImage) wrap.style.backgroundImage = "";
       if (wrap.getAttribute("data-wbdesk-pos")) {
@@ -769,23 +772,12 @@
     }
   }
 
-  function applyAvatar() {
-    var custom = avatarSel && avatarSel.type !== "official";
-    var url = custom ? avatarURL(avatarSel) : "";
-    var wrap = document.querySelector(AVATAR_TARGET_SEL);
-    if (!wrap) { renderAvatars(); return; }
-    if (!custom) {
-      // 官方默认：还原官方头像
-      restoreAvatarDom();
-      renderAvatars();
-      try { localStorage.setItem(AVATAR_SEL_KEY, JSON.stringify(avatarSel)); } catch (e) {}
-      return;
-    }
+  function applyAvatarToWrap(wrap, url) {
     rememberOrigAvatar(wrap);
-    // 隐藏官方图（不能 display:none——容器尺寸由它撑开，会塌陷 0×0）
-    var imgs = wrap.querySelectorAll("img[data-wbdesk-orig]");
-    for (var i = 0; i < imgs.length; i++) {
-      if (imgs[i].style.visibility !== "hidden") imgs[i].style.visibility = "hidden";
+    // 隐藏官方图（不能 display:none——容器尺寸由它撑开，会塌陷 0×0；SVG 同理）
+    var origs = wrap.querySelectorAll("[data-wbdesk-orig]");
+    for (var i = 0; i < origs.length; i++) {
+      if (origs[i].style.visibility !== "hidden") origs[i].style.visibility = "hidden";
     }
     if (wrap.style.backgroundImage && wrap.style.backgroundImage !== "none") wrap.style.backgroundImage = "none";
     if (getComputedStyle(wrap).position === "static") {
@@ -802,6 +794,21 @@
     var st = app.style;
     st.cssText = "width:100%;height:100%;border-radius:50%;position:absolute;inset:0;object-fit:cover;pointer-events:none;";
     if (app.getAttribute("src") !== url) app.setAttribute("src", url);
+  }
+
+  function applyAvatar() {
+    var custom = avatarSel && avatarSel.type !== "official";
+    var url = custom ? avatarURL(avatarSel) : "";
+    var wraps = document.querySelectorAll(AVATAR_TARGET_SEL);
+    if (!wraps.length) { renderAvatars(); return; }
+    if (!custom) {
+      // 官方默认：还原官方头像（含对话消息 SVG 头像）
+      restoreAvatarDom();
+      renderAvatars();
+      try { localStorage.setItem(AVATAR_SEL_KEY, JSON.stringify(avatarSel)); } catch (e) {}
+      return;
+    }
+    for (var w = 0; w < wraps.length; w++) applyAvatarToWrap(wraps[w], url);
     renderAvatars();
     try { localStorage.setItem(AVATAR_SEL_KEY, JSON.stringify(avatarSel)); } catch (e) {}
   }

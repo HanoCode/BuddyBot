@@ -18,6 +18,12 @@
   "use strict";
   if (window.__wbdeskCleanup) { try { window.__wbdeskCleanup(); } catch (e) {} }
 
+  // 代际令牌：每次注入递增。周期任务（头像保活/增强轮询/宠物动画）回调里
+  // 校验代数，不匹配即自动停摆——否则重复注入会累积多份旧定时器
+  // （cleanup 只能清 DOM 与已注册回调，清不掉旧闭包里的 interval），
+  // 新旧实例会互相打架（典型症状：头像被旧实例反复改 src 导致不停跳动）。
+  var GEN = (window.__wbdeskGen = (window.__wbdeskGen || 0) + 1);
+
   var BINDING = "__wbdesk";
   var EDGE_GAP = 18;          // 机器人距右/下缘的间距
   var DRAG_THRESHOLD = 6;     // 拖拽判定阈值（px），以内视为点击
@@ -99,14 +105,6 @@
     /* 半透明毛玻璃：backdrop-filter 失效时由 .78 透明度兜底 */
     "background:var(--p-bg);-webkit-backdrop-filter:blur(24px) saturate(1.4);backdrop-filter:blur(24px) saturate(1.4);",
     "box-shadow:var(--p-shadow);border:1px solid var(--p-border);background-size:cover;background-position:center;}",
-    /* 浅色主题（主题 Tab 或跟随系统切换） */
-    "#wbdesk-panel.light{--p-fg:#1b1e24;--p-sub:#69707d;--p-line:rgba(0,0,0,.09);--p-line-soft:rgba(0,0,0,.06);",
-    "--p-card:rgba(0,0,0,.035);--p-row:rgba(0,0,0,.04);--p-input:rgba(0,0,0,.05);",
-    "--p-bg:rgba(248,249,252,.84);--p-tab-on-bg:#1b1e24;--p-tab-on-fg:#ffffff;",
-    "--p-shadow:0 16px 48px rgba(31,41,55,.28);--p-border:rgba(0,0,0,.08);--p-sw:#c9cdd6;--p-sw-on:#1b1e24;}",
-    /* 壁纸生效时压暗/提亮底色保证可读性（覆盖毛玻璃底） */
-    "#wbdesk-panel.walled{background-color:rgba(15,17,22,.66);}",
-    "#wbdesk-panel.light.walled{background-color:rgba(248,249,252,.72);}",
     "#wbdesk-panel .p-head{display:flex;justify-content:space-between;align-items:center;padding:12px 14px 8px;}",
     "#wbdesk-panel .p-title{font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:6px;}",
     "#wbdesk-panel .p-close{border:none;background:transparent;color:var(--p-sub);font-size:14px;cursor:pointer;",
@@ -161,18 +159,68 @@
     "#wbdesk-panel .lbl b{font-weight:600;}",
     "#wbdesk-panel .lbl em{font-style:normal;color:var(--p-sub);font-size:11px;margin-left:5px;}",
     /* ---- 主题 Tab（外观 / 头像 / 壁纸，参考 WorkDaddy「主题」页） ---- */
-    "#wbdesk-panel .seg2{display:flex;gap:4px;background:var(--p-input);border-radius:8px;padding:2px;}",
+    "#wbdesk-panel .seg2{display:flex;gap:4px;background:var(--p-input);border-radius:8px;padding:2px;flex:none;}",
     "#wbdesk-panel .seg2 button{flex:1;background:transparent;color:var(--p-sub);border-radius:6px;padding:4px 0;}",
     "#wbdesk-panel .seg2 button.on{background:var(--p-tab-on-bg);color:var(--p-tab-on-fg);font-weight:600;}",
-    "#wbdesk-panel .swatches{display:flex;gap:8px;flex-wrap:wrap;padding:2px 0;}",
-    "#wbdesk-panel .swatch{width:26px;height:26px;border-radius:9px;cursor:pointer;border:none;padding:0;",
-    "outline:2px solid transparent;outline-offset:1px;}",
-    "#wbdesk-panel .swatch.on{outline-color:var(--p-fg);}",
-    "#wbdesk-panel .walls{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;padding:2px 0;}",
-    "#wbdesk-panel .wall{height:44px;border-radius:9px;cursor:pointer;border:none;padding:0;position:relative;",
-    "outline:2px solid transparent;outline-offset:1px;display:flex;align-items:center;justify-content:center;}",
-    "#wbdesk-panel .wall.on{outline-color:var(--p-fg);}",
-    "#wbdesk-panel .wall span{font-size:10px;color:rgba(255,255,255,.85);text-shadow:0 1px 3px rgba(0,0,0,.5);}",
+    /* 主题外观色卡（作用于 WorkBuddy 本体） */
+    "#wbdesk-panel .themes{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;padding:9px 0;}",
+    "#wbdesk-panel .theme-opt{background:transparent;border:2px solid transparent;border-radius:10px;padding:4px 2px;cursor:pointer;text-align:center;}",
+    "#wbdesk-panel .theme-opt.on{border-color:var(--p-btn);}",
+    "#wbdesk-panel .theme-opt .chip{height:26px;border-radius:6px;display:block;border:1px solid rgba(128,128,128,.25);}",
+    "#wbdesk-panel .theme-opt .tname{font-size:10.5px;color:var(--p-sub);display:block;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    "#wbdesk-panel .theme-opt.on .tname{color:var(--p-fg);font-weight:600;}",
+    /* 宠物皮肤选择（Codex 宠物精灵格式） */
+    "#wbdesk-panel .petgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:9px 0;}",
+    "#wbdesk-panel .petopt{background:transparent;border:2px solid transparent;border-radius:10px;padding:4px 2px;cursor:pointer;text-align:center;}",
+    "#wbdesk-panel .petopt.on{border-color:var(--p-btn);}",
+    "#wbdesk-panel .petopt img{width:100%;height:44px;object-fit:contain;display:block;}",
+    "#wbdesk-panel .petopt .pname{font-size:10.5px;color:var(--p-sub);display:block;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    "#wbdesk-panel .petopt.on .pname{color:var(--p-fg);font-weight:600;}",
+    "#wbdesk-panel .petopt .petoff{width:100%;height:44px;display:flex;align-items:center;justify-content:center;background:var(--p-input);border-radius:8px;}",
+    "#wbdesk-panel .petopt{position:relative;}",
+    "#wbdesk-panel .petopt .pet-del{position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:10px;line-height:16px;text-align:center;display:none;}",
+    "#wbdesk-panel .petopt:hover .pet-del{display:block;}",
+    "#wbdesk-panel .petopt.pet-upload{border-style:dashed;border-color:rgba(128,128,128,.4);cursor:pointer;}",
+    "#wbdesk-panel .petopt.pet-upload .petoff{background:transparent;color:var(--p-sub);font-size:18px;}",
+    "#wbdesk-panel .petopt.pet-upload.drag{border-color:var(--p-btn);}",
+    /* 宠物精灵生效：隐藏 CSS 五官与天线，外壳让位给精灵图逐帧动画 */
+    "#wbdesk-fab.petsprite .wb-antenna,#wbdesk-fab.petsprite .wb-antenna-dot,#wbdesk-fab.petsprite .wb-face{display:none;}",
+    "#wbdesk-fab.petsprite .wb-robot{background:transparent!important;box-shadow:none;border-radius:0;}",
+    "#wbdesk-fab.petsprite .wb-sprite{position:absolute;left:50%;bottom:0;transform:translateX(-50%);background-repeat:no-repeat;}",
+    "#wbdesk-fab.quiet.petsprite{transform:translateX(" + (FAB_W - 6 + EDGE_GAP + 10) + "px);}",
+    /* 头像：预设图片 + 自定义上传（参考 WorkDaddy 头像选择） */
+    "#wbdesk-panel .avats{display:flex;gap:8px;flex-wrap:wrap;padding:4px 0 2px;align-items:center;}",
+    "#wbdesk-panel .avat{width:44px;height:44px;border-radius:12px;cursor:pointer;border:2px solid transparent;padding:0;background:transparent;position:relative;flex:none;}",
+    "#wbdesk-panel .avat img{width:100%;height:100%;border-radius:10px;display:block;object-fit:cover;}",
+    "#wbdesk-panel .avat.on{border-color:var(--p-btn);}",
+    "#wbdesk-panel .avat .avat-del{position:absolute;right:-6px;top:-6px;width:16px;height:16px;border-radius:50%;",
+    "background:rgba(239,68,68,.92);color:#fff;font-size:10px;line-height:15px;text-align:center;display:none;padding:0;}",
+    "#wbdesk-panel .avat:hover .avat-del{display:block;}",
+    "#wbdesk-panel .avat.add{display:flex;align-items:center;justify-content:center;background:var(--p-input);",
+    "color:var(--p-sub);font-size:20px;line-height:1;}",
+    "#wbdesk-panel .avat.add:hover{color:var(--p-fg);}",
+    /* 壁纸：预设图片宫格 / 自定义上传（参考 WorkDaddy 壁纸选择） */
+    "#wbdesk-panel .bg-src{margin:2px 0 8px;}",
+    "#wbdesk-panel .walls{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:2px 0;}",
+    "#wbdesk-panel .wall{height:52px;border-radius:9px;overflow:hidden;cursor:pointer;border:none;padding:0;position:relative;",
+    "outline:2px solid transparent;outline-offset:1px;background:var(--p-input);}",
+    "#wbdesk-panel .wall img{width:100%;height:100%;object-fit:cover;display:block;}",
+    "#wbdesk-panel .wall.on{outline-color:var(--p-btn);}",
+    "#wbdesk-panel .wall .wall-del{position:absolute;right:3px;top:3px;width:16px;height:16px;border-radius:50%;",
+    "background:rgba(0,0,0,.55);color:#fff;border:none;font-size:10px;line-height:15px;padding:0;display:none;}",
+    "#wbdesk-panel .wall:hover .wall-del{display:block;}",
+    "#wbdesk-panel .wall-upload{grid-column:1/-1;height:52px;border:1.5px dashed var(--p-line);border-radius:9px;",
+    "display:flex;align-items:center;justify-content:center;color:var(--p-sub);font-size:11px;cursor:pointer;text-align:center;}",
+    "#wbdesk-panel .wall-upload.drag{border-color:var(--p-btn);color:var(--p-ghost-fg);}",
+    /* 壁纸蒙版 / 毛玻璃滑块（参考 WorkDaddy 背景蒙版 / 背景毛玻璃） */
+    "#wbdesk-panel .slider-row{padding:8px 0 2px;gap:10px;}",
+    "#wbdesk-panel input[type=range]{-webkit-appearance:none;appearance:none;width:120px;height:4px;border-radius:2px;",
+    "background:var(--p-sw);outline:none;margin:0;padding:0;border:none;flex:none;cursor:pointer;}",
+    "#wbdesk-panel input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;",
+    "background:var(--p-btn);cursor:pointer;border:none;}",
+    "#wbdesk-panel .slider-val{font-size:11px;color:var(--p-sub);width:34px;text-align:right;flex:none;}",
+    /* 官方默认头像（还原 WorkBuddy 官方头像） */
+    "#wbdesk-panel .avatar-off{width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--p-input);border-radius:10px;font-size:10.5px;color:var(--p-sub);}",
     /* 模型搜索 + 行操作 */
     "#wbdesk-panel .mname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
     /* 引用消息悬浮按钮 */
@@ -180,16 +228,7 @@
     "background:#f2f3f5;color:#17181c;font-size:11.5px;padding:4px 12px;cursor:pointer;",
     "box-shadow:0 4px 14px rgba(0,0,0,.45);font-family:inherit;}",
     "#wbdesk-quote:hover{background:#fff;}",
-    /* 主题 Tab：外观分段选择 / 机器人配色色板 / 壁纸宫格 */
-    "#wbdesk-panel .seg2{display:flex;gap:4px;flex:none;}",
-    "#wbdesk-panel .seg2 button{background:rgba(255,255,255,.08);color:#8b8f99;padding:3px 10px;}",
-    "#wbdesk-panel .seg2 button.on{background:#478cbf;color:#fff;}",
-    "#wbdesk-panel .swatches{display:flex;gap:8px;padding:4px 0 6px;}",
-    "#wbdesk-panel .swatches span{width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid transparent;box-shadow:inset 0 1px 0 rgba(255,255,255,.25);}",
-    "#wbdesk-panel .swatches span.on{border-color:#f2f3f5;}",
-    "#wbdesk-panel .walls{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:4px 0 6px;}",
-    "#wbdesk-panel .walls span{height:44px;border-radius:8px;cursor:pointer;border:2px solid transparent;background-size:cover;background-position:center;}",
-    "#wbdesk-panel .walls span.on{border-color:#478cbf;}",
+    /* 主题 Tab：外观分段选择 / 头像图片 / 壁纸宫格样式见上方主题区块 */
     /* 面板内 toast（备份/切换失败等即时反馈） */
     "#wbdesk-toast{position:fixed;z-index:2147483647;left:50%;top:18px;transform:translateX(-50%);max-width:70vw;",
     "background:rgba(220,38,38,.92);color:#fff;font:12px/1.5 -apple-system,sans-serif;padding:8px 14px;border-radius:10px;",
@@ -204,28 +243,6 @@
     "#wbdesk-mnav-tip{position:fixed;z-index:2147483647;display:none;max-width:260px;background:rgba(19,20,23,.92);",
     "color:#f2f3f5;font:11px/1.5 -apple-system,sans-serif;padding:6px 9px;border-radius:8px;",
     "box-shadow:0 6px 20px rgba(0,0,0,.4);pointer-events:none;word-break:break-all;}",
-    /* 面板浅色模式（.light 覆盖关键表面色） */
-    "#wbdesk-panel.light{background:rgba(246,247,250,.82);color:#1f2430;}",
-    "#wbdesk-panel.light .p-close{color:#9aa0ad;}",
-    "#wbdesk-panel.light .p-close:hover{background:rgba(0,0,0,.06);color:#1f2430;}",
-    "#wbdesk-panel.light .p-tabs{border-bottom-color:rgba(0,0,0,.08);}",
-    "#wbdesk-panel.light .p-tab{color:#7a8091;}",
-    "#wbdesk-panel.light .p-tab.on{background:#1f2430;color:#fff;}",
-    "#wbdesk-panel.light .card{background:rgba(255,255,255,.72);box-shadow:0 1px 3px rgba(0,0,0,.05);}",
-    "#wbdesk-panel.light .card .row{border-bottom-color:rgba(0,0,0,.06);}",
-    "#wbdesk-panel.light .acct{background:rgba(255,255,255,.8);border-color:rgba(0,0,0,.1);}",
-    "#wbdesk-panel.light input{background:#fff;border-color:rgba(0,0,0,.14);color:#1f2430;}",
-    "#wbdesk-panel.light input::placeholder{color:#9aa0ad;}",
-    "#wbdesk-panel.light .tip,#wbdesk-panel.light .grp-n,#wbdesk-panel.light .lbl em{color:#7a8091;}",
-    "#wbdesk-panel.light .sec{border-top-color:rgba(0,0,0,.1);}",
-    "#wbdesk-panel.light .gw{background:rgba(0,0,0,.05);color:#3a4150;}",
-    "#wbdesk-panel.light .sw{background:#c9ccd6;}",
-    "#wbdesk-panel.light .sw.on{background:#478cbf;}",
-    "#wbdesk-panel.light .sw i{background:#fff;}",
-    "#wbdesk-panel.light .sw.on i{background:#fff;}",
-    "#wbdesk-panel.light .seg2 button{background:rgba(0,0,0,.06);color:#7a8091;}",
-    "#wbdesk-panel.light .badge.dim{background:rgba(0,0,0,.07);color:#7a8091;}",
-    "#wbdesk-panel.light .p-body::-webkit-scrollbar-thumb{background:rgba(0,0,0,.18);}",
     "@media(prefers-reduced-motion:reduce){#wbdesk-fab,.wb-eye,.wb-antenna-dot{animation:none!important;transition:none!important}}",
   ].join("");
   var style = document.createElement("style");
@@ -287,24 +304,39 @@
     '<div class="blk-t">最近运行</div>' +
     '<div id="wbdesk-history"></div>' +
     "</div>" +
-    /* 主题 Tab（外观 / 头像 / 壁纸，参考 WorkDaddy「主题」页） */
+    /* 主题 Tab（外观 / 头像 / 壁纸，全部作用于 WorkBuddy 本体，参考 WorkDaddy「主题」页） */
     '<div class="pane" data-pane="theme">' +
     '<div class="grp"><span class="grp-t">外观</span></div>' +
-    '<div class="card"><div class="row">' +
-    '<span class="lbl"><b>面板主题</b><em>深色 / 浅色 / 跟随系统</em></span>' +
-    '<span class="seg2" id="wbdesk-mode">' +
-    '<button data-mode="dark">深色</button><button data-mode="light">浅色</button><button data-mode="auto">自动</button>' +
-    "</span></div></div>" +
+    '<div class="card"><div class="themes" id="wbdesk-themes"></div>' +
+    '<div class="tip">外观作用于 WorkBuddy 界面：自定义主题注入色板并联动官方深浅色（防弹回），刷新后自动恢复。</div></div>' +
+    '<div class="grp"><span class="grp-t">宠物</span></div>' +
+    '<div class="card"><div class="row"><span class="lbl"><b>悬浮机器人皮肤</b><em>Codex 宠物精灵动画（素材见 pets 目录 LICENSE）</em></span></div>' +
+    '<div class="petgrid" id="wbdesk-petgrid"><div class="tip" style="grid-column:1/-1">宠物加载中…</div></div>' +
+    "</div>" +
     '<div class="grp"><span class="grp-t">头像</span></div>' +
-    '<div class="card"><div class="row"><span class="lbl"><b>机器人配色</b><em>悬浮机器人与面板标识</em></span></div>' +
-    '<div class="swatches" id="wbdesk-avatars"></div></div>' +
+    '<div class="card"><div class="row"><span class="lbl"><b>用户头像</b><em>替换 WorkBuddy 左下角用户菜单头像</em></span></div>' +
+    '<div class="avats" id="wbdesk-avatars"></div>' +
+    '<input type="file" id="wbdesk-avatar-file" accept="image/png,image/jpeg,image/webp" style="display:none">' +
+    "</div>" +
     '<div class="grp"><span class="grp-t">壁纸</span></div>' +
-    '<div class="card"><div class="row"><span class="lbl"><b>面板壁纸</b><em>预设渐变或自定义图片</em></span></div>' +
-    '<div class="walls" id="wbdesk-walls"></div>' +
-    '<div class="row" style="padding:8px 0 6px">' +
-    '<button class="ghost" id="wbdesk-wall-file" style="flex:1">上传自定义壁纸</button>' +
-    '<button class="danger" id="wbdesk-wall-clear">还原</button></div>' +
-    '<div class="tip">自定义图片保存在本机（约 1.5MB 内），不上传服务器。</div>' +
+    '<div class="card">' +
+    '<div class="row"><span class="lbl"><b>WorkBuddy 壁纸</b><em>铺在 WorkBuddy 界面底层</em></span></div>' +
+    '<div class="seg2 bg-src" id="wbdesk-wall-src">' +
+    '<button data-src="preset">预设壁纸</button><button data-src="custom">自定义壁纸</button>' +
+    "</div>" +
+    '<div class="walls" id="wbdesk-walls"><div class="tip" style="grid-column:1/-1">壁纸加载中…</div></div>' +
+    '<div class="row slider-row">' +
+    '<span class="lbl"><b>背景蒙版</b><em>压暗壁纸保证可读</em></span>' +
+    '<input type="range" id="wbdesk-mask" min="0" max="100" step="1" value="30">' +
+    '<span class="slider-val" id="wbdesk-mask-val">30%</span></div>' +
+    '<div class="row slider-row">' +
+    '<span class="lbl"><b>背景毛玻璃</b><em>模糊壁纸</em></span>' +
+    '<input type="range" id="wbdesk-blur" min="0" max="100" step="1" value="0">' +
+    '<span class="slider-val" id="wbdesk-blur-val">0%</span></div>' +
+    '<div class="row"><span class="lbl"><b>消息文字阴影</b><em>壁纸下提升消息可读性</em></span>' +
+    '<span class="sw" id="wbdesk-tshadow"><i></i></span></div>' +
+    '<div class="row" style="padding:8px 0 2px">' +
+    '<button class="ghost" id="wbdesk-wall-reset" style="flex:1">不使用壁纸</button></div>' +
     "</div>" +
     "</div>" +
     /* 模型 Tab */
@@ -369,6 +401,7 @@
     panel.querySelectorAll(".pane").forEach(function (p) {
       p.classList.toggle("on", p.getAttribute("data-pane") === state.tab);
     });
+    if (state.tab === "theme") { ensureWalls(); ensurePets(); } // 首次打开主题页时拉取壁纸库与宠物库
   });
   setTab("account");
   function setTab(tab) {
@@ -384,6 +417,8 @@
     if (open) {
       undock();
       send("tasks", {}); // 打开面板即校准任务状态（含今日已完成徽标）
+      state.petWaveUntil = Date.now() + 1600; // 宠物挥手迎宾
+      if (state.pet) petStart();
     }
   }
 
@@ -603,137 +638,618 @@
     awakeSw.classList.toggle("on", state.sys.awake);
   };
 
-  // ---------- 面板交互：主题（外观 / 机器人配色 / 面板壁纸，参考 WorkDaddy「主题」页） ----------
-  var MODE_KEY = "wbdesk-panel-mode";
-  var ROBOT_KEY = "wbdesk-robot-color";
-  var WALL_KEY = "wbdesk-panel-wall";
+  // ---------- 面板交互：主题（外观 / 头像 / 壁纸，参考 WorkDaddy「主题」页） ----------
+  var AVATAR_SEL_KEY = "wbdesk-avatar-sel";
+  var AVATAR_CUSTOM_KEY = "wbdesk-avatars-custom";
+  var AVATAR_MAX = 8;  // 自定义头像上限
+  var WALL_MAX = 8;    // 自定义壁纸上限
 
-  // 机器人配色预设（与桌面端 App 图标同族的几何色系）
-  var ROBOT_PRESETS = [
-    { id: "ink", name: "墨蓝", c1: "#2b3550", c2: "#1c2438" },
-    { id: "coral", name: "珊瑚橙", c1: "#e8735a", c2: "#c9563f" },
-    { id: "mint", name: "薄荷绿", c1: "#3aa88f", c2: "#2b8571" },
-    { id: "violet", name: "堇紫", c1: "#6d5bd0", c2: "#5343ab" },
-    { id: "graphite", name: "石墨", c1: "#3c4250", c2: "#262b36" },
-  ];
-  // 面板壁纸预设（渐变）；自定义图片经 canvas 压缩后存本机
-  var WALL_PRESETS = [
-    { id: "none", name: "无", css: "" },
-    { id: "aurora", name: "极光", css: "linear-gradient(160deg,#1b2a4a 0%,#274b6d 45%,#3aa88f 100%)" },
-    { id: "dusk", name: "暮色", css: "linear-gradient(150deg,#3c2438 0%,#6d3b5b 50%,#e8735a 100%)" },
-    { id: "ocean", name: "深海", css: "linear-gradient(170deg,#0f2438 0%,#1b3a5c 55%,#478cbf 100%)" },
-    { id: "slate", name: "石墨", css: "linear-gradient(180deg,#262b36 0%,#3c4250 100%)" },
-  ];
+  // ===== 外观（作用于 WorkBuddy 本体：色板注入 + 原生深浅色联动，选择持久化在桌面端） =====
 
-  function applyPanelMode(mode) {
-    var light = mode === "light" ||
-      (mode === "auto" && window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches);
-    panel.classList.toggle("light", !!light);
-    panel.querySelectorAll("#wbdesk-mode button").forEach(function (b) {
-      b.classList.toggle("on", b.getAttribute("data-mode") === mode);
-    });
-    try { localStorage.setItem(MODE_KEY, mode); } catch (e) {}
+  var THEMES = [
+    { id: "default", name: "官方浅色", c1: "#f7f8fa", c2: "#e2e5ea" },
+    { id: "dark", name: "官方深色", c1: "#262a31", c2: "#12141a" },
+    { id: "eye-care", name: "护眼绿", c1: "#f0f5ec", c2: "#3b6d11" },
+    { id: "cyber-purple", name: "赛博紫", c1: "#1a1729", c2: "#7f77dd" },
+    { id: "glass", name: "毛玻璃", c1: "#17171b", c2: "#5a5a66" },
+  ];
+  var themeState = { id: "", wallpaper: "", mask: 30, blur: 0, textShadow: true };
+
+  function renderThemes() {
+    var box = panel.querySelector("#wbdesk-themes");
+    if (!box) return;
+    box.innerHTML = THEMES.map(function (t) {
+      var on = themeState.id === t.id;
+      return '<button class="theme-opt' + (on ? " on" : "") + '" data-theme-id="' + t.id + '" title="' + t.name + '">' +
+        '<span class="chip" style="background:linear-gradient(135deg,' + t.c1 + " 0 55%," + t.c2 + " 55% 100%)\"></span>" +
+        '<span class="tname">' + t.name + "</span></button>";
+    }).join("");
   }
-  panel.querySelector("#wbdesk-mode").addEventListener("click", function (e) {
-    var b = e.target.closest("button[data-mode]");
-    if (b) applyPanelMode(b.getAttribute("data-mode"));
+  panel.querySelector("#wbdesk-themes").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-theme-id]");
+    if (b) send("theme_apply", { id: b.getAttribute("data-theme-id") });
   });
-  if (window.matchMedia) {
-    var mq = window.matchMedia("(prefers-color-scheme: light)");
-    var onScheme = function () { applyPanelMode(getMode()); };
-    if (mq.addEventListener) mq.addEventListener("change", onScheme);
-    state.cleanup.push(function () { if (mq.removeEventListener) mq.removeEventListener("change", onScheme); });
+  // 桌面端推送主题状态（注入后 / 每次应用后）
+  window.__wbdeskSetTheme = function (v) {
+    if (!v) return;
+    themeState = v;
+    renderThemes();
+    renderWalls();
+    syncThemeControls();
+  };
+  function syncThemeControls() {
+    var m = panel.querySelector("#wbdesk-mask"), mv = panel.querySelector("#wbdesk-mask-val");
+    var b = panel.querySelector("#wbdesk-blur"), bv = panel.querySelector("#wbdesk-blur-val");
+    var sw = panel.querySelector("#wbdesk-tshadow");
+    if (m) m.value = themeState.mask;
+    if (mv) mv.textContent = themeState.mask + "%";
+    if (b) b.value = themeState.blur;
+    if (bv) bv.textContent = themeState.blur + "%";
+    if (sw) sw.classList.toggle("on", !!themeState.textShadow);
   }
-  function getMode() {
-    try { return localStorage.getItem(MODE_KEY) || "dark"; } catch (e) { return "dark"; }
+  panel.querySelector("#wbdesk-tshadow").addEventListener("click", function () {
+    send("theme_cfg", { on: !themeState.textShadow });
+  });
+
+  // ===== 头像（官方默认 / 预设 / 自定义上传；替换 WorkBuddy 左下角用户菜单头像，参考 WorkDaddy） =====
+
+  // 预设头像：几何机器人肖像（SVG 图片，配色与桌面端 App 图标同族）
+  var AVATAR_PRESETS = [
+    { id: "ink", name: "墨蓝", c1: "#2b3550", c2: "#1c2438", dot: "#478cbf" },
+    { id: "coral", name: "珊瑚橙", c1: "#e8735a", c2: "#c9563f", dot: "#ffd9a0" },
+    { id: "mint", name: "薄荷绿", c1: "#3aa88f", c2: "#2b8571", dot: "#b8f0d4" },
+    { id: "violet", name: "堇紫", c1: "#6d5bd0", c2: "#5343ab", dot: "#c9b8ff" },
+    { id: "graphite", name: "石墨", c1: "#3c4250", c2: "#262b36", dot: "#8fc1e3" },
+  ];
+
+  function robotAvatarSVG(p) {
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88">' +
+      '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="' + p.c1 + '"/><stop offset="1" stop-color="' + p.c2 + '"/>' +
+      "</linearGradient></defs>" +
+      '<rect x="41" y="6" width="6" height="14" rx="3" fill="' + p.c1 + '"/>' +
+      '<circle cx="44" cy="8" r="5" fill="' + p.dot + '"/>' +
+      '<rect x="8" y="20" width="72" height="60" rx="18" fill="url(#g)"/>' +
+      '<rect x="22" y="40" width="9" height="16" rx="4.5" fill="#eaf2fb"/>' +
+      '<rect x="57" y="40" width="9" height="16" rx="4.5" fill="#eaf2fb"/>' +
+      "</svg>";
+    return "data:image/svg+xml," + encodeURIComponent(svg);
   }
 
-  function applyRobotColor(id) {
-    var p = ROBOT_PRESETS.filter(function (x) { return x.id === id; })[0] || ROBOT_PRESETS[0];
-    var fabEl = document.getElementById("wbdesk-fab");
-    if (fabEl) {
-      var shell = fabEl.querySelector(".wb-robot");
-      if (shell) shell.style.background = "linear-gradient(150deg," + p.c1 + "," + p.c2 + ")";
-      var ant = fabEl.querySelector(".wb-antenna");
-      if (ant) ant.style.background = p.c1;
-    }
-    panel.querySelectorAll("#wbdesk-avatars span").forEach(function (s) {
-      s.classList.toggle("on", s.getAttribute("data-robot") === p.id);
-    });
-    try { localStorage.setItem(ROBOT_KEY, p.id); } catch (e) {}
+  var avatarCustom = []; // 自定义头像 dataURL 列表
+  try { avatarCustom = JSON.parse(localStorage.getItem(AVATAR_CUSTOM_KEY) || "[]") || []; } catch (e) {}
+  var avatarSel = null; // {type:"official"} | {type:"preset",id} | {type:"custom",idx}
+  try { avatarSel = JSON.parse(localStorage.getItem(AVATAR_SEL_KEY) || "null"); } catch (e) {}
+  if (!avatarSel || (avatarSel.type === "preset" && !AVATAR_PRESETS.filter(function (x) { return x.id === avatarSel.id; })[0])) {
+    avatarSel = { type: "official" }; // 首次使用 / 非法值：不覆盖官方头像
   }
-  (function () {
+
+  var AVATAR_TARGET_SEL = ".user-menu-trigger-avatar"; // WorkBuddy 用户菜单头像容器
+  var avatarOrigURL = null; // 首次捕获的官方头像（面板卡片预览用）
+
+  function avatarURL(sel) {
+    if (!sel) return "";
+    if (sel.type === "custom" && avatarCustom[sel.idx] != null) return avatarCustom[sel.idx];
+    var p = AVATAR_PRESETS.filter(function (x) { return x.id === sel.id; })[0] || AVATAR_PRESETS[0];
+    return robotAvatarSVG(p);
+  }
+
+  function saveAvatarCustom() {
+    try { localStorage.setItem(AVATAR_CUSTOM_KEY, JSON.stringify(avatarCustom)); } catch (e) {
+      toast("头像保存失败，请清理存储空间后重试");
+    }
+  }
+
+  // WorkDaddy 同款覆盖层方案：不改官方 <img> 的 src（React 重渲染会立刻写回），
+  // 而是隐藏官方图（visibility 保留占位防塌陷）+ 在容器内叠加自定义 <img>。
+  function rememberOrigAvatar(wrap) {
+    var imgs = wrap.querySelectorAll("img:not([data-wbdesk-avatar-app]):not([data-wbdesk-orig])");
+    for (var i = 0; i < imgs.length; i++) {
+      imgs[i].setAttribute("data-wbdesk-orig", "1");
+      if (avatarOrigURL == null) avatarOrigURL = imgs[i].getAttribute("src") || "";
+    }
+  }
+
+  function restoreAvatarDom() {
+    var wraps = document.querySelectorAll(AVATAR_TARGET_SEL);
+    for (var w = 0; w < wraps.length; w++) {
+      var wrap = wraps[w];
+      var apps = wrap.querySelectorAll("img[data-wbdesk-avatar-app]");
+      for (var a = 0; a < apps.length; a++) apps[a].remove();
+      var imgs = wrap.querySelectorAll("img[data-wbdesk-orig]");
+      for (var b = 0; b < imgs.length; b++) {
+        imgs[b].style.visibility = "";
+        imgs[b].removeAttribute("data-wbdesk-orig");
+      }
+      if (wrap.style.backgroundImage) wrap.style.backgroundImage = "";
+      if (wrap.getAttribute("data-wbdesk-pos")) {
+        wrap.style.position = "";
+        wrap.removeAttribute("data-wbdesk-pos");
+      }
+    }
+  }
+
+  function applyAvatar() {
+    var custom = avatarSel && avatarSel.type !== "official";
+    var url = custom ? avatarURL(avatarSel) : "";
+    var wrap = document.querySelector(AVATAR_TARGET_SEL);
+    if (!wrap) { renderAvatars(); return; }
+    if (!custom) {
+      // 官方默认：还原官方头像
+      restoreAvatarDom();
+      renderAvatars();
+      try { localStorage.setItem(AVATAR_SEL_KEY, JSON.stringify(avatarSel)); } catch (e) {}
+      return;
+    }
+    rememberOrigAvatar(wrap);
+    // 隐藏官方图（不能 display:none——容器尺寸由它撑开，会塌陷 0×0）
+    var imgs = wrap.querySelectorAll("img[data-wbdesk-orig]");
+    for (var i = 0; i < imgs.length; i++) {
+      if (imgs[i].style.visibility !== "hidden") imgs[i].style.visibility = "hidden";
+    }
+    if (wrap.style.backgroundImage && wrap.style.backgroundImage !== "none") wrap.style.backgroundImage = "none";
+    if (getComputedStyle(wrap).position === "static") {
+      wrap.style.position = "relative";
+      wrap.setAttribute("data-wbdesk-pos", "1");
+    }
+    var app = wrap.querySelector("img[data-wbdesk-avatar-app]");
+    if (!app) {
+      app = document.createElement("img");
+      app.setAttribute("data-wbdesk-avatar-app", "1");
+      app.alt = "";
+      wrap.appendChild(app);
+    }
+    var st = app.style;
+    st.cssText = "width:100%;height:100%;border-radius:50%;position:absolute;inset:0;object-fit:cover;pointer-events:none;";
+    if (app.getAttribute("src") !== url) app.setAttribute("src", url);
+    renderAvatars();
+    try { localStorage.setItem(AVATAR_SEL_KEY, JSON.stringify(avatarSel)); } catch (e) {}
+  }
+  // 2s 保活：React 重渲染/切会话会重建头像节点，定时整刷（幂等，参考 WorkDaddy setBuildInterval）
+  var avatarTimer = setInterval(function () {
+    if (window.__wbdeskGen !== GEN) { clearInterval(avatarTimer); return; } // 旧实例自动停摆
+    applyAvatar();
+  }, 2000);
+  state.cleanup.push(function () { clearInterval(avatarTimer); });
+
+  function renderAvatars() {
     var box = panel.querySelector("#wbdesk-avatars");
-    box.innerHTML = ROBOT_PRESETS.map(function (p) {
-      return '<span data-robot="' + p.id + '" title="' + p.name + '" style="background:linear-gradient(150deg,' + p.c1 + "," + p.c2 + ')"></span>';
+    if (!box) return;
+    var html = '<button class="avat' + (avatarSel.type === "official" ? " on" : "") + '" data-avatar-official="1" title="官方默认">' +
+      '<span class="avatar-off">官方</span></button>';
+    html += AVATAR_PRESETS.map(function (p) {
+      var on = avatarSel.type === "preset" && avatarSel.id === p.id;
+      return '<button class="avat' + (on ? " on" : "") + '" data-avatar-preset="' + p.id + '" title="' + p.name + '">' +
+        '<img src="' + robotAvatarSVG(p) + '" alt="' + p.name + '"></button>';
     }).join("");
-    box.addEventListener("click", function (e) {
-      var s = e.target.closest("span[data-robot]");
-      if (s) applyRobotColor(s.getAttribute("data-robot"));
+    html += avatarCustom.map(function (url, i) {
+      var on = avatarSel.type === "custom" && avatarSel.idx === i;
+      return '<button class="avat' + (on ? " on" : "") + '" data-avatar-custom="' + i + '" title="自定义头像">' +
+        '<img src="' + url + '" alt="自定义头像">' +
+        '<span class="avat-del" data-avatar-del="' + i + '" title="删除该头像">✕</span></button>';
+    }).join("");
+    html += '<button class="avat add" id="wbdesk-avatar-add" title="添加头像">+</button>';
+    box.innerHTML = html;
+  }
+
+  panel.querySelector("#wbdesk-avatars").addEventListener("click", function (e) {
+    var del = e.target.closest("[data-avatar-del]");
+    if (del) {
+      var di = parseInt(del.getAttribute("data-avatar-del"), 10);
+      avatarCustom.splice(di, 1);
+      saveAvatarCustom();
+      if (avatarSel.type === "custom") {
+        if (avatarSel.idx === di) avatarSel = { type: "official" };
+        else if (avatarSel.idx > di) avatarSel = { type: "custom", idx: avatarSel.idx - 1 };
+      }
+      applyAvatar();
+      return;
+    }
+    if (e.target.closest("[data-avatar-official]")) { avatarSel = { type: "official" }; applyAvatar(); return; }
+    var pre = e.target.closest("[data-avatar-preset]");
+    if (pre) { avatarSel = { type: "preset", id: pre.getAttribute("data-avatar-preset") }; applyAvatar(); return; }
+    var cus = e.target.closest("[data-avatar-custom]");
+    if (cus) { avatarSel = { type: "custom", idx: parseInt(cus.getAttribute("data-avatar-custom"), 10) }; applyAvatar(); return; }
+    if (e.target.closest("#wbdesk-avatar-add")) panel.querySelector("#wbdesk-avatar-file").click();
+  });
+  panel.querySelector("#wbdesk-avatar-file").addEventListener("change", function () {
+    var f = this.files && this.files[0];
+    this.value = "";
+    if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          // 居中裁剪成 96x96，webp 0.85，控制本机占用（同 WorkDaddy 头像处理）
+          var size = Math.min(img.width, img.height);
+          var cv = document.createElement("canvas");
+          cv.width = 96; cv.height = 96;
+          cv.getContext("2d").drawImage(img, (img.width - size) / 2, (img.height - size) / 2, size, size, 0, 0, 96, 96);
+          if (avatarCustom.length >= AVATAR_MAX) { toast("自定义头像最多 " + AVATAR_MAX + " 张，请先删除再上传"); return; }
+          avatarCustom.push(cv.toDataURL("image/webp", 0.85));
+          saveAvatarCustom();
+          avatarSel = { type: "custom", idx: avatarCustom.length - 1 };
+          applyAvatar();
+        } catch (e) {
+          toast("头像图片处理失败");
+        }
+      };
+      img.onerror = function () { toast("头像图片读取失败"); };
+      img.src = rd.result;
+    };
+    rd.readAsDataURL(f);
+  });
+
+  // ===== 壁纸（铺在 WorkBuddy #root；选择 / 上传 / 蒙版 / 毛玻璃全部下发桌面端持久化并经 CDP 应用） =====
+
+  var walls = [];             // 桌面端推送的壁纸库 [{id:"preset:…"/"custom:…", name, url}]
+  var wallSrcView = "preset"; // 壁纸区当前视图：预设 / 自定义
+  var wallsReq = false;       // 本轮注入是否已请求过壁纸库
+
+  function customCount() {
+    var n = 0;
+    for (var i = 0; i < walls.length; i++) if (walls[i].id.indexOf("custom:") === 0) n++;
+    return n;
+  }
+
+  function renderWalls() {
+    var box = panel.querySelector("#wbdesk-walls");
+    if (!box) return;
+    panel.querySelectorAll("#wbdesk-wall-src button").forEach(function (b) {
+      b.classList.toggle("on", b.getAttribute("data-src") === wallSrcView);
+    });
+    if (wallSrcView === "preset") {
+      var presets = walls.filter(function (w) { return w.id.indexOf("preset:") === 0; });
+      box.innerHTML = presets.length
+        ? presets.map(function (w) {
+            var on = themeState.wallpaper === w.id;
+            return '<button class="wall' + (on ? " on" : "") + '" data-wall-id="' + w.id + '" title="' + w.name + '">' +
+              '<img src="' + w.url + '" alt="' + w.name + '"></button>';
+          }).join("")
+        : '<div class="tip" style="grid-column:1/-1">' + (wallsReq ? "暂无内置壁纸" : "壁纸加载中…") + "</div>";
+      return;
+    }
+    var customs = walls.filter(function (w) { return w.id.indexOf("custom:") === 0; });
+    var html = '<div class="wall-upload" id="wbdesk-wall-upload" title="点击选择图片，或拖拽到此处">' +
+      "点击或拖拽上传壁纸（PNG / JPG / WebP，保存在本机）</div>";
+    html += customs.map(function (w) {
+      var on = themeState.wallpaper === w.id;
+      return '<button class="wall' + (on ? " on" : "") + '" data-wall-id="' + w.id + '" title="自定义壁纸">' +
+        '<img src="' + w.url + '" alt="自定义壁纸">' +
+        '<span class="wall-del" data-wall-del="' + w.id + '" title="删除该壁纸">✕</span></button>';
+    }).join("");
+    if (!customs.length) {
+      html += '<div class="tip" style="grid-column:1/-1">还没有自定义壁纸，先上传一张（最多 ' + WALL_MAX + " 张）</div>";
+    }
+    box.innerHTML = html;
+  }
+
+  function readWallFile(f) {
+    if (!f) return;
+    if (!/^image\/(png|jpe?g|webp)$/i.test(f.type)) { toast("仅支持 PNG / JPG / WebP"); return; }
+    var rd = new FileReader();
+    rd.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          // 压缩到最长边 1280，webp 0.8（落盘在桌面端，应用时按需经 CDP 下发）
+          var scale = Math.min(1, 1280 / Math.max(img.width, img.height));
+          var cv = document.createElement("canvas");
+          cv.width = Math.round(img.width * scale);
+          cv.height = Math.round(img.height * scale);
+          cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+          send("wall_add", { dataUrl: cv.toDataURL("image/webp", 0.8) }); // 落盘后桌面端自动应用并回推列表
+        } catch (e) { toast("图片处理失败"); }
+      };
+      img.onerror = function () { toast("图片读取失败"); };
+      img.src = rd.result;
+    };
+    rd.readAsDataURL(f);
+  }
+
+  panel.querySelector("#wbdesk-wall-src").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-src]");
+    if (!b) return;
+    wallSrcView = b.getAttribute("data-src");
+    renderWalls();
+  });
+
+  (function wireWalls() {
+    var card = panel.querySelector("#wbdesk-wall-src").closest(".card");
+    card.addEventListener("click", function (e) {
+      var del = e.target.closest("[data-wall-del]");
+      if (del) { send("wall_del", { id: del.getAttribute("data-wall-del") }); return; }
+      var w = e.target.closest("[data-wall-id]");
+      if (w) { send("theme_wall", { wall: w.getAttribute("data-wall-id") }); return; }
+      if (e.target.closest("#wbdesk-wall-upload")) {
+        if (customCount() >= WALL_MAX) { toast("自定义壁纸最多 " + WALL_MAX + " 张，请先删除再上传"); return; }
+        var inp = panel.querySelector("#wbdesk-wall-file");
+        if (inp) inp.click();
+      }
+    });
+    // 拖拽上传区随 renderWalls 重建，用事件委托挂拖拽
+    card.addEventListener("dragover", function (e) {
+      var up2 = e.target.closest("#wbdesk-wall-upload");
+      if (!up2) return;
+      e.preventDefault();
+      up2.classList.add("drag");
+    });
+    card.addEventListener("dragleave", function (e) {
+      var up2 = e.target.closest("#wbdesk-wall-upload");
+      if (up2) up2.classList.remove("drag");
+    });
+    card.addEventListener("drop", function (e) {
+      var up2 = e.target.closest("#wbdesk-wall-upload");
+      if (!up2) return;
+      e.preventDefault();
+      up2.classList.remove("drag");
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      readWallFile(f);
+    });
+  })();
+  // 自定义壁纸文件选择器（隐藏 input，由上传区触发）
+  (function () {
+    var inp = document.createElement("input");
+    inp.type = "file";
+    inp.id = "wbdesk-wall-file";
+    inp.accept = "image/png,image/jpeg,image/webp";
+    inp.style.display = "none";
+    inp.addEventListener("change", function () {
+      var f = inp.files && inp.files[0];
+      inp.value = "";
+      readWallFile(f);
+    });
+    panel.querySelector(".p-body").appendChild(inp);
+  })();
+
+  panel.querySelector("#wbdesk-wall-reset").addEventListener("click", function () {
+    send("theme_wall", { wall: "" });
+  });
+
+  // 蒙版 / 毛玻璃滑块：即时更新显示，停止 300ms 后下发（同 WorkDaddy 防抖）
+  (function wireSliders() {
+    var maskTimer = null, blurTimer = null;
+    panel.querySelector("#wbdesk-mask").addEventListener("input", function () {
+      panel.querySelector("#wbdesk-mask-val").textContent = this.value + "%";
+      clearTimeout(maskTimer);
+      maskTimer = setTimeout(function () {
+        send("theme_cfg", { mask: parseInt(panel.querySelector("#wbdesk-mask").value, 10) });
+      }, 300);
+    });
+    panel.querySelector("#wbdesk-blur").addEventListener("input", function () {
+      panel.querySelector("#wbdesk-blur-val").textContent = this.value + "%";
+      clearTimeout(blurTimer);
+      blurTimer = setTimeout(function () {
+        send("theme_cfg", { blur: parseInt(panel.querySelector("#wbdesk-blur").value, 10) });
+      }, 300);
     });
   })();
 
-  function applyWall(wall) {
-    wall = wall || { preset: "none" };
-    var css = "";
-    if (wall.custom) {
-      css = "linear-gradient(rgba(19,20,23,.72),rgba(19,20,23,.72)),url('" + wall.custom + "') center/cover no-repeat";
-    } else {
-      var p = WALL_PRESETS.filter(function (x) { return x.id === wall.preset; })[0] || WALL_PRESETS[0];
-      css = p.css;
-    }
-    panel.style.background = css; // 空 = 还原 CSS 默认半透明毛玻璃
-    panel.querySelectorAll("#wbdesk-walls span").forEach(function (s) {
-      s.classList.toggle("on", s.getAttribute("data-wall") === (wall.custom ? "custom" : (wall.preset || "none")));
-    });
-    try { localStorage.setItem(WALL_KEY, JSON.stringify(wall)); } catch (e) {
-      if (wall.custom) toast("壁纸图片过大，本机保存失败（本次预览仍生效）");
-    }
+  // 壁纸库由桌面端按需推送（对应 WorkDaddy 的 daemon /api/wallpapers 通道）
+  function ensureWalls() {
+    if (wallsReq) return;
+    wallsReq = true;
+    send("walls", {});
   }
-  (function () {
-    var box = panel.querySelector("#wbdesk-walls");
-    box.innerHTML = WALL_PRESETS.map(function (p) {
-      return '<span data-wall="' + p.id + '" title="' + p.name + '" style="background:' + (p.css || "rgba(255,255,255,.06)") + '"></span>';
+  window.__wbdeskSetWalls = function (list) {
+    walls = list || [];
+    renderWalls();
+  };
+
+  // ===== 宠物（Codex 宠物精灵格式：192×208/帧、8 列 × 9 状态行，参考 workbuddy/pets） =====
+
+  var pets = [];        // 桌面端推送的内置宠物 [{id,name,preview,sprite}]
+  var petsReq = false;  // 本轮注入是否已请求过宠物库
+
+  // 帧表（与 petdex-desktop sprite.zig 一致）：[帧列, 停留 ms]
+  var PET_ANIM = {
+    idle:    { row: 0, frames: [[0, 280], [1, 110], [2, 110], [3, 140], [4, 140], [5, 320]] },
+    waving:  { row: 3, frames: [[0, 140], [1, 140], [2, 140], [3, 280]] },
+    jumping: { row: 4, frames: [[0, 140], [1, 140], [2, 140], [3, 140], [4, 280]] },
+    failed:  { row: 5, frames: [[0, 140], [1, 140], [2, 140], [3, 140], [4, 140], [5, 140], [6, 140], [7, 240]] },
+    waiting: { row: 6, frames: [[0, 150], [1, 150], [2, 150], [3, 150], [4, 150], [5, 260]] },
+    running: { row: 7, frames: [[0, 120], [1, 120], [2, 120], [3, 120], [4, 120], [5, 220]] },
+  };
+  var petAnim = { state: "", frame: 0, timer: null };
+
+  function petDesired() {
+    if (Date.now() < (state.petWaveUntil || 0)) return "waving";
+    var busy = (state.tasks && state.tasks.busy) || [];
+    if (busy.length > 0) return "running";
+    return "idle";
+  }
+
+  function petStop() {
+    if (petAnim.timer) { clearTimeout(petAnim.timer); petAnim.timer = null; }
+  }
+
+  function petTick() {
+    petAnim.timer = null;
+    if (window.__wbdeskGen !== GEN) return; // 旧实例自动停摆
+    if (!state.pet) return;
+    var sp = fab.querySelector(".wb-sprite");
+    if (!sp || !sp._petFrame) return;
+    var want = petDesired();
+    if (want !== petAnim.state) { petAnim.state = want; petAnim.frame = 0; }
+    var def = PET_ANIM[petAnim.state] || PET_ANIM.idle;
+    var row = def.row < (sp._petFrame.rows || 11) ? def.row : 0; // 自定义素材行数不足时回落 idle
+    var f = def.frames[petAnim.frame % def.frames.length];
+    sp.style.backgroundPosition = "-" + (f[0] * sp._petFrame.w) + "px -" + (row * sp._petFrame.h) + "px";
+    petAnim.frame++;
+    petAnim.timer = setTimeout(petTick, f[1]);
+  }
+  function petStart() { if (!petAnim.timer) petTick(); }
+  state.cleanup.push(petStop); // 宠物动画是 setTimeout 链，清理时必须显式停掉
+
+  function petSheetRows(meta, cb) {
+    // 精灵图行数按素材实际尺寸自适应（内置 8×11；自定义可能不同行数）
+    if (meta._rows) return cb(meta._rows);
+    var img = new Image();
+    img.onload = function () {
+      var fw = img.naturalWidth / 8;
+      var fh = fw * 208 / 192; // 标准帧高（192:208）
+      var rows = Math.max(9, Math.round(img.naturalHeight / (fh || 1)));
+      meta._rows = rows;
+      cb(rows);
+    };
+    img.onerror = function () { cb(11); };
+    img.src = meta.sprite;
+  }
+
+  function applyPetVisual() {
+    var sp = fab.querySelector(".wb-sprite");
+    if (!state.pet) {
+      fab.classList.remove("petsprite");
+      if (sp) sp.remove();
+      petStop();
+      return;
+    }
+    var meta = null;
+    for (var i = 0; i < pets.length; i++) if (pets[i].id === state.pet) { meta = pets[i]; break; }
+    if (!meta || !meta.sprite) {
+      // 素材未到位（如刚恢复选择）：先请求宠物库，数据回推后重放
+      ensurePets();
+      return;
+    }
+    petSheetRows(meta, function (rows) {
+      if (state.pet !== meta.id) return; // 加载期间用户已切换
+      var sp2 = fab.querySelector(".wb-sprite");
+      fab.classList.add("petsprite");
+      if (!sp2) {
+        sp2 = document.createElement("div");
+        sp2.className = "wb-sprite";
+        fab.querySelector(".wb-robot").appendChild(sp2);
+      }
+      var h = 62, w = Math.round(62 * 192 / 208); // 帧显示尺寸（保持 192:208 比例）
+      sp2._petFrame = { w: w, h: h, rows: rows };
+      sp2.style.width = w + "px";
+      sp2.style.height = h + "px";
+      sp2.style.backgroundImage = "url('" + meta.sprite + "')";
+      sp2.style.backgroundSize = (w * 8) + "px " + (h * rows) + "px";
+      petAnim.state = "";
+      petStart();
+    });
+  }
+
+  function renderPetGrid() {
+    var box = panel.querySelector("#wbdesk-petgrid");
+    if (!box) return;
+    var html = '<button class="petopt' + (!state.pet ? " on" : "") + '" data-pet-id="" title="经典机器人">' +
+      '<span class="petoff">经典</span><span class="pname">经典机器人</span></button>';
+    html += pets.map(function (p) {
+      var on = state.pet === p.id;
+      var del = p.custom ? '<span class="pet-del" data-pet-del="' + p.id + '" title="删除该宠物">✕</span>' : "";
+      return '<button class="petopt' + (on ? " on" : "") + '" data-pet-id="' + p.id + '" title="' + p.name + '">' +
+        '<img src="' + p.preview + '" alt="' + p.name + '">' + del + '<span class="pname">' + p.name + "</span></button>";
     }).join("");
-    box.addEventListener("click", function (e) {
-      var s = e.target.closest("span[data-wall]");
-      if (s) applyWall({ preset: s.getAttribute("data-wall") });
-    });
-    panel.querySelector("#wbdesk-wall-file").addEventListener("click", function () {
-      var inp = document.createElement("input");
-      inp.type = "file";
-      inp.accept = "image/png,image/jpeg,image/webp";
-      inp.onchange = function () {
-        var f = inp.files && inp.files[0];
-        if (!f) return;
-        var rd = new FileReader();
-        rd.onload = function () {
-          var img = new Image();
-          img.onload = function () {
-            // 压缩到最长边 1280，webp 0.8，控制 localStorage 占用
-            var scale = Math.min(1, 1280 / Math.max(img.width, img.height));
-            var cv = document.createElement("canvas");
-            cv.width = Math.round(img.width * scale);
-            cv.height = Math.round(img.height * scale);
-            cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
-            applyWall({ preset: "custom", custom: cv.toDataURL("image/webp", 0.8) });
-          };
-          img.src = rd.result;
-        };
-        rd.readAsDataURL(f);
+    html += '<div class="petopt pet-upload" id="wbdesk-pet-upload" title="选择 Codex 宠物精灵图（spritesheet，8 列布局）">' +
+      '<span class="petoff">＋</span><span class="pname">上传自定义</span></div>';
+    box.innerHTML = html;
+  }
+
+  // 自定义宠物上传：读取图片 → 裁第一帧做预览 → 交桌面端落盘并应用
+  function uploadPetFile(f) {
+    if (!f) return;
+    if (!/^image\/(webp|png|jpeg)$/i.test(f.type)) { toast("仅支持 WebP / PNG / JPG 精灵图"); return; }
+    var rd = new FileReader();
+    rd.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var fw = img.naturalWidth / 8;                 // 8 列
+          var fh = Math.round(fw * 208 / 192);           // 标准帧高
+          if (fh < 8 || img.naturalHeight < fh) { toast("图片尺寸不像精灵图（需 8 列横排网格）"); return; }
+          var cv = document.createElement("canvas");
+          cv.width = Math.round(fw); cv.height = fh;
+          cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+          var preview = cv.toDataURL("image/webp", 0.85);
+          var name = (f.name || "").replace(/\.[a-z0-9]+$/i, "") || "自定义宠物";
+          send("pet_add", { name: name, dataUrl: preview, spriteUrl: rd.result });
+          toast("已添加自定义宠物：" + name);
+        } catch (e) { toast("精灵图处理失败"); }
       };
-      inp.click();
+      img.onerror = function () { toast("图片读取失败"); };
+      img.src = rd.result;
+    };
+    rd.readAsDataURL(f);
+  }
+
+  function ensurePets() {
+    if (petsReq) return;
+    petsReq = true;
+    send("pets", {});
+  }
+  window.__wbdeskSetPets = function (list) {
+    pets = list || [];
+    renderPetGrid();
+    if (state.pet) applyPetVisual(); // 素材到位后重放选中宠物
+  };
+  window.__wbdeskSetPet = function (v) {
+    state.pet = (v && v.id) || "";
+    renderPetGrid();
+    applyPetVisual();
+    if (state.pet && !pets.length) ensurePets();
+  };
+  panel.querySelector("#wbdesk-petgrid").addEventListener("click", function (e) {
+    var del = e.target.closest("[data-pet-del]");
+    if (del) {
+      e.stopPropagation();
+      send("pet_del", { id: del.getAttribute("data-pet-del") });
+      if (state.pet === del.getAttribute("data-pet-del")) state.pet = "";
+      return;
+    }
+    if (e.target.closest("#wbdesk-pet-upload")) {
+      var inp = panel.querySelector("#wbdesk-pet-file");
+      if (inp) inp.click();
+      return;
+    }
+    var b = e.target.closest("[data-pet-id]");
+    if (!b) return;
+    state.pet = b.getAttribute("data-pet-id");
+    applyPetVisual();
+    renderPetGrid();
+    send("pet_apply", { id: state.pet });
+  });
+  // 自定义宠物文件选择器（隐藏 input，由上传卡触发；支持拖拽）
+  (function () {
+    var inp = document.createElement("input");
+    inp.type = "file";
+    inp.id = "wbdesk-pet-file";
+    inp.accept = "image/webp,image/png,image/jpeg";
+    inp.style.display = "none";
+    inp.addEventListener("change", function () {
+      var f = inp.files && inp.files[0];
+      inp.value = "";
+      uploadPetFile(f);
     });
-    panel.querySelector("#wbdesk-wall-clear").addEventListener("click", function () { applyWall({ preset: "none" }); });
+    panel.querySelector(".p-body").appendChild(inp);
+    var grid = panel.querySelector("#wbdesk-petgrid");
+    grid.addEventListener("dragover", function (e) {
+      var up = e.target.closest("#wbdesk-pet-upload");
+      if (!up) return;
+      e.preventDefault();
+      up.classList.add("drag");
+    });
+    grid.addEventListener("dragleave", function (e) {
+      var up = e.target.closest("#wbdesk-pet-upload");
+      if (up) up.classList.remove("drag");
+    });
+    grid.addEventListener("drop", function (e) {
+      var up = e.target.closest("#wbdesk-pet-upload");
+      if (!up) return;
+      e.preventDefault();
+      up.classList.remove("drag");
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      uploadPetFile(f);
+    });
   })();
+  state.cleanup.push(function () { petStop(); });
+
   (function restoreTheme() {
-    applyPanelMode(getMode());
-    var robot = "ink";
-    try { robot = localStorage.getItem(ROBOT_KEY) || "ink"; } catch (e) {}
-    applyRobotColor(robot);
-    var wall = null;
-    try { wall = JSON.parse(localStorage.getItem(WALL_KEY) || "null"); } catch (e) {}
-    applyWall(wall && (wall.custom || wall.preset !== "none") ? wall : { preset: "none" });
+    renderThemes();
+    syncThemeControls();
+    applyAvatar();
   })();
 
   // ---------- 面板交互：任务 ----------
@@ -822,6 +1338,7 @@
   // ---------- 桌面端 → 面板：任务 ----------
   window.__wbdeskSetTasks = function (view) {
     state.tasks = view || { busy: [], history: [] };
+    if (state.pet) petStart(); // 任务运行状态切换宠物动画（running/idle）
     var busy = state.tasks.busy || [];
     var history = state.tasks.history || [];
 
@@ -1243,6 +1760,10 @@
     delete window.__wbdeskSetPool;
     delete window.__wbdeskSetTasks;
     delete window.__wbdeskSetModels;
+    delete window.__wbdeskSetWalls;
+    delete window.__wbdeskSetTheme;
+    delete window.__wbdeskSetPet;
+    delete window.__wbdeskSetPets;
     delete window.__wbdeskSetSys;
     delete window.__wbdeskToast;
   };

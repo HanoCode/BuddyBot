@@ -1,13 +1,13 @@
-import { Moon, Search, Sun, RefreshCw, Power, RotateCw, ChevronDown, Settings, CircleArrowUp, Loader2, PanelLeftClose, PanelLeftOpen, Languages } from "lucide-react";
+import { Moon, Search, Sun, RefreshCw, Power, RotateCw, ChevronDown, Settings, CircleArrowUp, Loader2, PanelLeftClose, PanelLeftOpen, Languages, Puzzle } from "lucide-react";
 import { useTheme } from "../../hooks/useTheme";
 import { errText } from "../../hooks/useAsync";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { gatewayApi, systemApi } from "../../services/api";
+import { gatewayApi, injectApi, systemApi } from "../../services/api";
 import { toast } from "../common/Feedback";
-import { onEvent } from "../../services/events";
+import { EVENT, onEvent } from "../../services/events";
 import { setLang, useLang, useT } from "../../i18n";
-import type { GatewayStatus } from "../../types";
+import type { GatewayStatus, InjectStatus } from "../../types";
 
 interface Props {
   collapsed: boolean;
@@ -19,6 +19,8 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
   const [lang] = useLang();
   const t = useT();
   const [status, setStatus] = useState<GatewayStatus | null>(null);
+  const [inj, setInj] = useState<InjectStatus | null>(null);
+  const [injBusy, setInjBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [spinning, setSpinning] = useState(false);
@@ -43,6 +45,44 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
     const off = onEvent("gateway:log", () => refresh());
     return off;
   }, [refresh]);
+
+  // 注入状态：低频轮询 + 后端事件即时同步
+  const refreshInj = useCallback(async () => {
+    try {
+      setInj(await injectApi.status());
+    } catch {
+      /* 设置页已有完整错误展示，这里保持上次状态即可 */
+    }
+  }, []);
+  useEffect(() => {
+    void refreshInj();
+    const timer = setInterval(refreshInj, 5000);
+    const off = onEvent(EVENT.injectStatus, () => void refreshInj());
+    return () => {
+      clearInterval(timer);
+      off();
+    };
+  }, [refreshInj]);
+
+  // 注入快捷开关：与设置页完全相同的启停路径
+  const toggleInject = async () => {
+    if (injBusy) return;
+    setInjBusy(true);
+    try {
+      if (inj?.running) {
+        await injectApi.stop();
+        toast.success(t("注入已停止"));
+      } else {
+        await injectApi.start();
+        toast.success(t("注入已启动"), t("官方客户端窗口右下角会出现 🧩 面板按钮"));
+      }
+      await refreshInj();
+    } catch (e) {
+      toast.error(t("注入操作失败"), errText(e));
+    } finally {
+      setInjBusy(false);
+    }
+  };
 
   // 点击空白关闭菜单
   useEffect(() => {
@@ -154,6 +194,20 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
       </div>
 
       <div className="tb-right">
+        <button
+          className={`gw-pill inj${inj?.running ? "" : " stopped"}${injBusy ? " busy" : ""}`}
+          onClick={() => void toggleInject()}
+          data-tip={inj?.running ? t("停止客户端注入") : t("启动客户端注入")}
+        >
+          {injBusy ? (
+            <Loader2 size={12} strokeWidth={2.4} className="spin" />
+          ) : (
+            <Puzzle size={12} strokeWidth={2.4} />
+          )}
+          {inj?.running
+            ? t("注入运行中 · {port}", { port: String(inj.port ?? "") })
+            : t("注入已停止")}
+        </button>
         <div className="gw-menu-wrap" ref={menuRef}>
           <button
             className={`gw-pill${status?.running ? "" : " stopped"}${busy ? " busy" : ""}`}

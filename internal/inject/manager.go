@@ -14,13 +14,16 @@ import (
 	"sync"
 	"time"
 
-	_ "embed"
+	"embed"
 
 	"workbuddy-desktop/internal/core"
 )
 
 //go:embed panel.js
 var panelJS string
+
+//go:embed wallpapers/*.webp
+var wallFS embed.FS
 
 // ============================================================
 // 注入管理器：CDP 连接生命周期 + 面板注入 + 账号备份/切换
@@ -116,10 +119,32 @@ func (m *Manager) Start() error {
 	defer m.mu.Unlock()
 	if m.conn != nil {
 		if m.conn.alive() {
-			return nil // 已在运行
+			// WS 存活 ≠ 面板还在：DevTools WebSocket 附着的是页面目标，
+			// 页面刷新/重登/账号切换（location.reload）不会断开连接，
+			// 但注入的悬浮机器人 DOM 已随页面清空。校验面板存在性，
+			// 缺失就在原连接上重注入（复用 WS，Runtime.addBinding 随会话存活）。
+			present, err := m.conn.evaluate(
+				`!!(window.__wbdeskCleanup&&document.getElementById('wbdesk-fab'))`, 3*time.Second)
+			if err == nil && string(present) == "true" {
+				return nil // 面板完好，已在运行
+			}
+			if err == nil {
+				// 面板丢失（页面刷新过）：原连接重注入 + 重推状态
+				if _, ierr := m.conn.evaluate(panelExpr(), 15*time.Second); ierr == nil {
+					if ierr = m.pushPanelState(m.conn); ierr == nil {
+						go m.restoreTheme()
+						core.EmitEvent(core.EventInjectStatus, map[string]any{"kind": "recovered"})
+						return nil
+					}
+				}
+			}
+			// 连接已不可用或重注入失败：关闭后走完整启动
+			m.conn.close()
+			m.conn, m.target, m.started = nil, Target{}, time.Time{}
+		} else {
+			// 连接已死（客户端关闭）：清理残留状态后重走启动流程
+			m.conn, m.target, m.started = nil, Target{}, time.Time{}
 		}
-		// 连接已死（页面刷新/客户端关闭）：清理残留状态后重走启动流程
-		m.conn, m.target, m.started = nil, Target{}, time.Time{}
 	}
 	cfg := m.svc.GetConfig().Inject
 	port := cfg.Port
@@ -157,6 +182,8 @@ func (m *Manager) Start() error {
 		conn.close()
 		return err
 	}
+	// 恢复已保存的 WorkBuddy 主题（页面刷新/客户端重启后主题不丢）
+	go m.restoreTheme()
 
 	m.conn = conn
 	m.port = port
@@ -240,6 +267,11 @@ func (m *Manager) onBinding(name, payload string) {
 		Text   string `json:"text"`
 		Task   string `json:"task"`
 		Key    string `json:"key"`
+		Wall   string `json:"wall"`
+		Mask   *int   `json:"mask"`
+		Blur   *int   `json:"blur"`
+		Data   string `json:"dataUrl"`
+		Sprite string `json:"spriteUrl"` // pet_add：自定义宠物精灵图 dataURL
 	}
 	if json.Unmarshal([]byte(payload), &p) != nil {
 		return
@@ -305,6 +337,116 @@ func (m *Manager) onBinding(name, payload string) {
 		m.refreshPanelTasks()
 	case "models":
 		m.refreshPanelModels()
+	case "walls":
+		// 面板主题页请求壁纸库（内置 + 自定义，按需推送，注入本身不携带图片数据）
+		go m.pushPanelWalls()
+	case "pets":
+		// 面板请求内置宠物库（含 spritesheet dataURL，按需推送）
+		go m.pushPanelPets()
+	case "pet_apply":
+		// 切换悬浮机器人皮肤（"" = 经典 CSS 机器人）
+		go func() {
+			if err := m.ApplyPet(p.ID); err != nil {
+				m.reportError("切换宠物失败", err)
+			}
+		}()
+	case "pet_add":
+		// 上传自定义宠物（面板已裁好 preview 帧），成功后刷新宠物库并自动应用
+		go func() {
+			id, err := m.AddCustomPet(p.Name, p.Data, p.Sprite)
+			if err != nil {
+				m.reportError("添加自定义宠物失败", err)
+				return
+			}
+			if err := m.ApplyPet(id); err != nil {
+				m.reportError("应用自定义宠物失败", err)
+			}
+			m.pushPanelPets()
+		}()
+	case "pet_del":
+		// 删除自定义宠物；若正在使用则重置为经典机器人
+		go func() {
+			if err := m.DeleteCustomPet(p.ID); err != nil {
+				m.reportError("删除自定义宠物失败", err)
+				return
+			}
+			m.pushPanelPets()
+			m.mu.Lock()
+			conn := m.conn
+			m.mu.Unlock()
+			if conn != nil {
+				m.pushPanelPet(conn)
+			}
+		}()
+	case "theme_state":
+		// 面板请求主题状态（注入后 pushPanelState 已推过一次，这里供手动刷新）
+		m.mu.Lock()
+		conn := m.conn
+		m.mu.Unlock()
+		if conn != nil {
+			m.pushPanelTheme(conn)
+		}
+	case "theme_apply":
+		// 切换主题外观（default/dark 仅联动官方外观，其余注入色板+补丁）
+		go func() {
+			th := m.svc.GetConfig().Inject.Theme
+			th.ID = p.ID
+			if err := m.ApplyTheme(th); err != nil {
+				m.reportError("应用主题失败", err)
+			}
+		}()
+	case "theme_wall":
+		// 切换壁纸（"" = 无壁纸）
+		go func() {
+			th := m.svc.GetConfig().Inject.Theme
+			th.Wallpaper = p.Wall
+			if err := m.ApplyTheme(th); err != nil {
+				m.reportError("应用壁纸失败", err)
+			}
+		}()
+	case "theme_cfg":
+		// 蒙版 / 毛玻璃 / 文字阴影（指针字段区分「未传」与「传 0」）
+		go func() {
+			th := m.svc.GetConfig().Inject.Theme
+			if p.Mask != nil {
+				th.Mask = clampInt(*p.Mask, 0, 100)
+			}
+			if p.Blur != nil {
+				th.Blur = clampInt(*p.Blur, 0, 100)
+			}
+			th.TextShadow = p.On
+			if err := m.ApplyTheme(th); err != nil {
+				m.reportError("主题设置失败", err)
+			}
+		}()
+	case "wall_add":
+		// 自定义壁纸上传（面板已压缩为 webp dataURL）：落盘 → 选中 → 重应用
+		go func() {
+			name, err := m.addCustomWallpaper(p.Data)
+			if err == nil {
+				th := m.svc.GetConfig().Inject.Theme
+				th.Wallpaper = "custom:" + name
+				err = m.ApplyTheme(th)
+			}
+			if err != nil {
+				m.reportError("添加壁纸失败", err)
+			}
+			m.pushPanelWalls()
+		}()
+	case "wall_del":
+		// 删除自定义壁纸（面板传完整引用 custom:<name>）；若正在使用则清空引用并重应用
+		go func() {
+			name := strings.TrimPrefix(p.ID, "custom:")
+			th := m.svc.GetConfig().Inject.Theme
+			if th.Wallpaper == "custom:"+name {
+				th.Wallpaper = ""
+				_ = m.ApplyTheme(th)
+			}
+			if err := m.deleteCustomWallpaper(name); err != nil {
+				m.reportError("删除壁纸失败", err)
+			}
+			m.pushPanelWalls()
+		}()
 	case "awake":
 		// 面板防休眠开关
 		go func() {
@@ -527,6 +669,8 @@ func (m *Manager) pushPanelState(conn *cdpConn) error {
 	m.pushPanelTasks(conn)
 	m.pushPanelModels(conn)
 	m.pushPanelSys(conn)
+	m.pushPanelTheme(conn)
+	m.pushPanelPet(conn)
 	return nil
 }
 

@@ -291,6 +291,16 @@ export interface InjectConfig {
      * 会话消息索引（悬浮定位条）
      */
     "message_nav": boolean;
+
+    /**
+     * 主题（注入面板「主题」Tab，作用于 WorkBuddy 本体换肤；ID 为空=从未设置，不注入）
+     */
+    "theme": ThemeConfig;
+
+    /**
+     * 宠物（注入面板悬浮机器人皮肤；"" = 经典 CSS 机器人）
+     */
+    "pet": string;
 }
 
 /**
@@ -973,6 +983,36 @@ export interface TaskStat {
     "success": number;
     "failed": number;
     "skipped": number;
+}
+
+/**
+ * ThemeConfig WorkBuddy 换肤状态（对齐 WorkDaddy 主题页的能力面）
+ */
+export interface ThemeConfig {
+    /**
+     * default/dark/eye-care/cyber-purple/glass
+     */
+    "id": string;
+
+    /**
+     * ""无 / "preset:wallpaper-01" / "custom:<文件名>"
+     */
+    "wallpaper": string;
+
+    /**
+     * 背景蒙版 0-100（壁纸压暗）
+     */
+    "mask": number;
+
+    /**
+     * 背景毛玻璃 0-100（壁纸模糊）
+     */
+    "blur": number;
+
+    /**
+     * 消息文字阴影（壁纸可读性增强）
+     */
+    "text_shadow": boolean;
 }
 
 /**

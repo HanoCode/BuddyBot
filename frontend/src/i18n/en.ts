@@ -73,6 +73,7 @@ export const en: Record<string, string> = {
   "停止客户端注入": "Stop client injection",
   "启动客户端注入": "Start client injection",
   "注入已停止": "Injection stopped",
+  "注入运行中 · {port}": "Injection running · {port}",
   "注入已启动": "Injection started",
   "官方客户端窗口右下角会出现 🧩 面板按钮": "A 🧩 panel button will appear at the bottom-right of the official client window",
   "当前构建不支持自动检查更新": "This build does not support automatic update checks",

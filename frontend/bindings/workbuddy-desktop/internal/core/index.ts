@@ -53,6 +53,7 @@ export type {
     TaskRun,
     TaskRunDetail,
     TaskStat,
+    ThemeConfig,
     TrendPoint,
     UserFootprint
 } from "./models.js";

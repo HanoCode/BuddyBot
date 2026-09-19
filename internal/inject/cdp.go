@@ -97,6 +97,8 @@ func dialCDP(ctx context.Context, port int, targetID string, onBinding func(name
 	if err != nil {
 		return nil, fmt.Errorf("连接 CDP WebSocket 失败: %w", err)
 	}
+	// 面板回传可能携带 base64 图片（自定义壁纸/宠物上传），默认 32KB 读上限会直接断连
+	ws.SetReadLimit(64 << 20)
 
 	c := &cdpConn{
 		ws:        ws,

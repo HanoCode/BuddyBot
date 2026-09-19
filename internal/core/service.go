@@ -127,6 +127,19 @@ type InjectConfig struct {
 	AutoResumeSession bool `json:"auto_resume_session"` // 继续异常中断会话
 	QuoteMessage      bool `json:"quote_message"`       // 引用消息文本
 	MessageNav        bool `json:"message_nav"`         // 会话消息索引（悬浮定位条）
+	// 主题（注入面板「主题」Tab，作用于 WorkBuddy 本体换肤；ID 为空=从未设置，不注入）
+	Theme ThemeConfig `json:"theme"`
+	// 宠物（注入面板悬浮机器人皮肤；"" = 经典 CSS 机器人）
+	Pet string `json:"pet"`
+}
+
+// ThemeConfig WorkBuddy 换肤状态（对齐 WorkDaddy 主题页的能力面）
+type ThemeConfig struct {
+	ID         string `json:"id"`          // default/dark/eye-care/cyber-purple/glass
+	Wallpaper  string `json:"wallpaper"`   // ""无 / "preset:wallpaper-01" / "custom:<文件名>"
+	Mask       int    `json:"mask"`        // 背景蒙版 0-100（壁纸压暗）
+	Blur       int    `json:"blur"`        // 背景毛玻璃 0-100（壁纸模糊）
+	TextShadow bool   `json:"text_shadow"` // 消息文字阴影（壁纸可读性增强）
 }
 
 type Config struct {
@@ -248,7 +261,7 @@ func DefaultConfig() *Config {
 		Prompt:        PromptConfig{Mode: "passthrough"},
 		Models:        ModelsConfig{Aliases: map[string]string{}, Rates: map[string]float64{}, Groups: map[string]string{}},
 		Redis:         RedisConfig{Enabled: false},
-		Inject:        InjectConfig{Port: 9223, DNDAutoConfirm: true},
+		Inject:        InjectConfig{Port: 9223, DNDAutoConfirm: true, Theme: ThemeConfig{Mask: 30, TextShadow: true}},
 		SkillHub:      SkillHubConfig{CacheTTLMinutes: DefaultSkillHubCacheTTLMinutes},
 	}
 }

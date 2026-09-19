@@ -115,6 +115,8 @@ body {
 .gw-pill.stopped { background: var(--red-soft); color: var(--red); }
 .gw-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 2.2s infinite; }
 .gw-pill.stopped .dot { animation: none; }
+/* 客户端注入快捷开关：主色系与网关胶囊（绿）区分 */
+.gw-pill.inj { background: var(--primary-soft); color: var(--primary); }
 @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(16,185,129,.45);} 55% { box-shadow: 0 0 0 5px rgba(16,185,129,0);} }
 
 .icon-btn {

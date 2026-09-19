@@ -2,7 +2,6 @@
 #
 # 产物命名与 internal/api/system.go pickUpdateAsset 的匹配规则对应：
 #   BuddyBot-darwin-arm64.zip            macOS .app 包（应用内自动更新）
-#   BuddyBot-darwin-amd64.zip
 #   BuddyBot-windows-amd64.exe           Windows 便携 exe（应用内自动更新）
 #   checksums.txt                        全部产物的 sha256（下载后强校验）
 #
@@ -23,7 +22,6 @@ jobs:
       matrix:
         include:
           - { os: macos-14, goos: darwin, goarch: arm64 }
-          - { os: macos-13, goos: darwin, goarch: amd64 }
           - { os: windows-2022, goos: windows, goarch: amd64 }
     runs-on: ${{ matrix.os }}
     steps:

@@ -553,13 +553,12 @@ func (s *Scheduler) execute(taskType string, a Account) TaskRunDetail {
 		return TaskRunDetail{UID: a.UID, Status: TaskFailed, Message: "凭证缺少 accessToken / refreshToken"}
 	}
 
-	// token 有效期预警：签到/旅行在临期窗口内先提示刷新（keepalone 已单独处理）
+	// token 临期（微信扫码登录 token 时效仅 7 天，登录后即处于 168h 窗口内）：
+	// 不判死，先用 refreshToken 自动续期，续期成功继续执行任务
 	if a.ExpiresIn > 0 && a.ExpiresIn < int64(expiringSoonWindow.Seconds()) {
-		s.svc.Store().MutateAccountState(a.UID, func(s2 *AccountState) {
-			s2.LastActivity = Now()
-		})
-		return TaskRunDetail{UID: a.UID, Status: TaskFailed,
-			Message: fmt.Sprintf("token 将在 %d 小时后过期，请及时刷新或重新授权", a.ExpiresIn/3600)}
+		if det, ok := s.tryRefresh(a); !ok {
+			return det
+		}
 	}
 
 	switch taskType {
@@ -674,6 +673,43 @@ func (s *Scheduler) adoptBuddy(a Account, cred *UpstreamCred) TaskRunDetail {
 	default:
 		return TaskRunDetail{UID: a.UID, Status: TaskFailed, Message: "领养失败: " + err.Error()}
 	}
+}
+
+// tryRefresh token 临期时的自动续期：调上游刷新端点并原子写回凭证，
+// 刷新成功解除「需重新登录」标记。ok=false 时 det 为失败原因（含需重新登录）。
+// 与 doKeepalive 的刷新写回同构，但语义略异：缺 refreshToken 时此处直接判失败
+// （任务无法继续），keepalive 则记 skipped。
+func (s *Scheduler) tryRefresh(a Account) (det TaskRunDetail, ok bool) {
+	cred, err := LoadUpstreamCred(s.svc.AuthDir(), a.Credential)
+	if err != nil {
+		return TaskRunDetail{UID: a.UID, Status: TaskFailed, Message: "凭证读取失败: " + err.Error()}, false
+	}
+	if cred.RefreshToken == "" {
+		return TaskRunDetail{UID: a.UID, Status: TaskFailed,
+			Message: "token 临期且凭证缺少 refreshToken，无法自动刷新，需重新扫码授权登录"}, false
+	}
+	nc, err := s.up.refreshToken(cred)
+	if err != nil {
+		if isReloginRequired(err) {
+			s.svc.Store().MutateAccountState(a.UID, func(st *AccountState) {
+				st.NeedsRelogin = true
+				st.Note = "refresh token 被服务端拒绝，需重新授权登录"
+			})
+			EmitEvent(EventAccountStatus, map[string]any{"uid": a.UID, "status": "relogin"})
+			return TaskRunDetail{UID: a.UID, Status: TaskFailed,
+				Message: "refresh token 已被服务端拒绝，需重新扫码授权登录"}, false
+		}
+		return TaskRunDetail{UID: a.UID, Status: TaskFailed, Message: "token 自动刷新失败: " + err.Error()}, false
+	}
+	if err := SaveUpstreamCred(s.svc.AuthDir(), a.Credential, nc); err != nil {
+		return TaskRunDetail{UID: a.UID, Status: TaskFailed, Message: "新 token 写回凭证失败: " + err.Error()}, false
+	}
+	s.svc.Store().MutateAccountState(a.UID, func(st *AccountState) {
+		st.LastActivity = Now()
+		st.NeedsRelogin = false
+	})
+	EmitEvent(EventAccountStatus, map[string]any{"uid": a.UID, "status": "online"})
+	return TaskRunDetail{}, true
 }
 
 // doKeepalive 真实 token 保活：临期（或已过期）时调上游刷新端点并原子写回凭证。

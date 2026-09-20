@@ -616,15 +616,48 @@ func TestSchedulerRecoversExpiredCooldown(t *testing.T) {
 	}
 }
 
-func TestSchedulerWarnsExpiringToken(t *testing.T) {
+func TestSchedulerExpiringTokenAutoRefreshes(t *testing.T) {
 	svc := newTestService(t)
+	// token 剩 48h（< 168h 临期窗口，微信扫码登录即此情形）→ 应先自动刷新再继续签到
 	seedCredential(t, svc.AuthDir(), "u_soon", 48*time.Hour)
+	up := fakeUpstreamRoutes(t, func(int, string) (int, string) { return http.StatusOK, fakeSSE200 })
+	defer up.Close()
+	pointUpstreamAt(t, svc, up)
+
+	run := svc.Scheduler().RunFor(TaskCheckin, "manual", nil)
+	if run.Success != 1 {
+		t.Fatalf("临期 token 应自动刷新后签到成功: %+v", run)
+	}
+	cred, err := LoadUpstreamCred(svc.AuthDir(), "workbuddy-u_soon.json")
+	if err != nil {
+		t.Fatalf("读回凭证失败: %v", err)
+	}
+	if cred.AccessToken != "at-refreshed" {
+		t.Fatalf("凭证未刷新: at=%s", cred.AccessToken)
+	}
+}
+
+func TestSchedulerExpiringTokenRefreshRejected(t *testing.T) {
+	svc := newTestService(t)
+	seedCredential(t, svc.AuthDir(), "u_rej", 48*time.Hour)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/plugin/auth/token/refresh" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"code":12153,"msg":"Offline user session not found"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer up.Close()
+	pointUpstreamAt(t, svc, up)
+
 	run := svc.Scheduler().RunFor(TaskCheckin, "manual", nil)
 	if run.Failed != 1 {
-		t.Fatalf("token 即将过期应记 failed: %+v", run)
+		t.Fatalf("refresh token 被拒时应记 failed: %+v", run)
 	}
-	if !strings.Contains(run.Details[0].Message, "过期") {
-		t.Fatalf("预警信息缺失: %+v", run.Details[0])
+	if !strings.Contains(run.Details[0].Message, "重新扫码授权") {
+		t.Fatalf("应明确提示需重新授权: %+v", run.Details[0])
 	}
 }
 

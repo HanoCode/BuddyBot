@@ -1,11 +1,11 @@
-import { Moon, Search, Sun, RefreshCw, Power, RotateCw, ChevronDown, Settings, CircleArrowUp, Loader2, PanelLeftClose, PanelLeftOpen, Languages, Puzzle, X, Minus, Plus, Download } from "lucide-react";
+import { Moon, Search, Sun, RefreshCw, Power, RotateCw, ChevronDown, Settings, CircleArrowUp, Loader2, PanelLeftClose, PanelLeftOpen, Languages, Puzzle, X, Minus, Plus, Download, Github } from "lucide-react";
 import { Application, Window } from "@wailsio/runtime";
 import { useTheme } from "../../hooks/useTheme";
 import { getCloseBehavior } from "../../hooks/useCloseBehavior";
 import { errText } from "../../hooks/useAsync";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { gatewayApi, injectApi, systemApi, IS_WAILS } from "../../services/api";
+import { accountsApi, gatewayApi, injectApi, systemApi, IS_WAILS } from "../../services/api";
 import { confirmDialog, toast } from "../common/Feedback";
 import CloseAskDialog from "./CloseAskDialog";
 import { EVENT, onEvent } from "../../services/events";
@@ -16,6 +16,9 @@ interface Props {
   collapsed: boolean;
   onToggleCollapse: () => void;
 }
+
+// GitHub 项目主页（标题栏图标入口）
+const REPO_URL = "https://github.com/HanoCode/BuddyBot";
 
 export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
   const [theme, toggleTheme] = useTheme();
@@ -182,6 +185,17 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
   // ---------- 窗口控制（无边框窗口的自绘红绿灯） ----------
   const [closeAsk, setCloseAsk] = useState(false);
 
+  // 退出：二次确认后停止网关/注入并退出（防误触）
+  const quitAfterConfirm = async () => {
+    const ok = await confirmDialog({
+      title: t("退出 BuddyBot？"),
+      desc: t("退出后将停止网关、注入与所有后台任务。"),
+      danger: true,
+      confirmText: t("退出程序"),
+    });
+    if (ok) Application.Quit();
+  };
+
   // 关闭：按偏好执行 —— tray 直接隐藏；quit 弹窗确认后退出；ask 弹窗询问
   const handleClose = async () => {
     if (!IS_WAILS) return;
@@ -191,13 +205,7 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
       return;
     }
     if (b === "quit") {
-      const ok = await confirmDialog({
-        title: t("退出 BuddyBot？"),
-        desc: t("退出后将停止网关、注入与所有后台任务。"),
-        danger: true,
-        confirmText: t("退出程序"),
-      });
-      if (ok) Application.Quit();
+      await quitAfterConfirm();
       return;
     }
     setCloseAsk(true);
@@ -352,6 +360,13 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
           </button>
         </div>
         <button
+          className="icon-btn"
+          data-tip={t("GitHub 项目主页")}
+          onClick={() => void accountsApi.openURL(REPO_URL).catch(() => {})}
+        >
+          <Github size={15} strokeWidth={2} />
+        </button>
+        <button
           className={`icon-btn${pathname === "/settings" ? " on" : ""}`}
           data-tip={t("系统设置")}
           onClick={() => go("/settings")}
@@ -390,7 +405,7 @@ export default function TitleBar({ collapsed, onToggleCollapse }: Props) {
         onDecide={(b) => {
           setCloseAsk(false);
           if (b === "tray") void Window.Hide();
-          else void handleClose(); // quit 路径复用确认弹窗
+          else void quitAfterConfirm(); // 直接走退出确认，不能回调 handleClose（会重读 ask 偏好再开同一个弹窗）
         }}
       />
     </div>

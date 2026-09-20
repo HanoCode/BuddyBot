@@ -67,6 +67,7 @@ export const en: Record<string, string> = {
   "切换浅色主题": "Switch to light theme",
   "切换深色主题": "Switch to dark theme",
   "切换语言": "Switch language",
+  "GitHub 项目主页": "GitHub repository",
   "中": "中",
   "EN": "EN",
 

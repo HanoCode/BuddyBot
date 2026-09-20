@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -43,6 +45,15 @@ func NewGateway(svc *Service) *Gateway {
 	return &Gateway{svc: svc, up: newUpstreamClient(), exploreLast: map[string]time.Time{}}
 }
 
+// isAddrInUse 端口占用判定：unix 走 errno 比较；Windows 的 WSAEADDRINUSE
+// 文案为 "Only one usage of each socket address..."，用字符串兜底匹配。
+func isAddrInUse(err error) bool {
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return true
+	}
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "one usage of each socket")
+}
+
 // Start 启动监听（addr 形如 ":7863"）
 func (g *Gateway) Start(addr string) error {
 	g.mu.Lock()
@@ -52,6 +63,9 @@ func (g *Gateway) Start(addr string) error {
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
+		if isAddrInUse(err) {
+			return fmt.Errorf("监听 %s 失败：端口已被占用（很可能已有 BuddyBot 实例在运行，请检查系统托盘；也可在设置中更换监听端口）", addr)
+		}
 		return fmt.Errorf("监听 %s 失败: %w", addr, err)
 	}
 	g.ln = ln

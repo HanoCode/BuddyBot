@@ -21,6 +21,12 @@ var assets embed.FS
 var promptsJSON []byte
 
 func main() {
+	// 单实例保护：关窗口默认隐藏到托盘，旧实例仍在运行；重复启动会造成
+	// 网关端口 7863 冲突（bind WSAEADDRINUSE）。第二个实例弹提示后直接退出。
+	if !core.AcquireSingleInstance() {
+		return
+	}
+
 	// 过滤标准库 log 的良性噪音（net/http 空闲连接上的迟到响应，见 logfilter.go）
 	core.InstallStdLogFilter()
 
@@ -80,13 +86,24 @@ func main() {
 	}()
 
 	// 主窗口：无边框 + macOS 红绿灯内嵌（配合前端自绘标题栏）
+	// 尺寸自适应屏幕：固定 1380×860 在小屏 / 高 DPI 缩放的 Windows 笔记本上
+	// 会超出屏幕（连拖拽调大小的边缘都在屏外），这里按主屏工作区收缩，
+	// 最小尺寸同样约束在屏幕内，保证窗口永远可完整显示、可正常调整大小。
+	w, h, minW, minH := 1380, 860, 1080, 700
+	if sm := app.Screen; sm != nil {
+		if s := sm.GetPrimary(); s != nil && s.WorkArea.Width > 0 && s.WorkArea.Height > 0 {
+			waW, waH := s.WorkArea.Width, s.WorkArea.Height
+			w, h = min(w, waW*92/100), min(h, waH*92/100)
+			minW, minH = min(minW, waW*96/100), min(minH, waH*96/100)
+		}
+	}
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:      "main", // 供 FocusMainWindow 等按名定位
 		Title:     "BuddyBot",
-		Width:     1380,
-		Height:    860,
-		MinWidth:  1080,
-		MinHeight: 700,
+		Width:     w,
+		Height:    h,
+		MinWidth:  minW,
+		MinHeight: minH,
 		Frameless: true,
 		Mac: application.MacWindow{
 			TitleBar: application.MacTitleBarHiddenInset,

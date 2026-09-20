@@ -1,9 +1,11 @@
 # 发布流水线：push tag（v*）触发
 #
 # 产物命名与 internal/api/system.go pickUpdateAsset 的匹配规则对应：
-#   BuddyBot-darwin-arm64.zip            macOS .app 包（应用内自动更新）
-#   BuddyBot-windows-amd64.exe           Windows 便携 exe（应用内自动更新，SignPath 签名）
-#   checksums.txt                        全部产物的 sha256（下载后强校验）
+#   BuddyBot-darwin-arm64.zip                  macOS .app 包（免安装拖入 Applications，应用内自动更新）
+#   BuddyBot-darwin-arm64-installer.pkg        macOS 安装器（双击安装到 /Applications）
+#   BuddyBot-windows-amd64.exe                 Windows 便携 exe（免安装，应用内自动更新，SignPath 签名）
+#   BuddyBot-windows-amd64-installer.exe       Windows NSIS 安装器（开始菜单/桌面快捷方式 + 卸载器）
+#   checksums.txt                              全部产物的 sha256（下载后强校验）
 #
 # 版本号唯一来源 = git tag，经 APP_VERSION → ldflags 注入 internal/api.appVersion。
 #
@@ -62,6 +64,11 @@ jobs:
           wails3 task darwin:package ARCH=${{ matrix.goarch }} APP_VERSION=${{ env.VERSION }}
           ditto -c -k --sequesterRsrc --keepParent \
             bin/BuddyBot.app "bin/BuddyBot-darwin-${{ matrix.goarch }}.zip"
+          # pkg 安装器：双击安装到 /Applications（未签名，首次打开需右键 → 打字确认）
+          pkgbuild --component bin/BuddyBot.app \
+            --install-location /Applications \
+            --identifier app.buddybot.desktop \
+            "bin/BuddyBot-darwin-${{ matrix.goarch }}-installer.pkg"
 
       - name: Build Windows portable exe
         if: matrix.goos == 'windows'
@@ -69,6 +76,8 @@ jobs:
         run: |
           wails3 task windows:build APP_VERSION=${{ env.VERSION }}
           Copy-Item bin/BuddyBot.exe bin/BuddyBot-windows-amd64.exe
+          # NSIS 安装器（windows runner 预装 makensis）：开始菜单/桌面快捷方式 + 卸载器
+          makensis /V2 /DARCH=amd64 "/DBINDIR=$PWD\bin" build\windows\installer.nsi
 
       # 上传未签名 exe 供 SignPath 拉取（SignPath Action 只接受 GitHub artifact 输入）
       - name: Upload unsigned Windows exe
@@ -107,6 +116,7 @@ jobs:
           name: assets-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             bin/BuddyBot-darwin-*.zip
+            bin/BuddyBot-darwin-*.pkg
             bin/BuddyBot-windows-*.exe
           if-no-files-found: error
 

@@ -41,7 +41,15 @@ func TestPriceTableCost(t *testing.T) {
 func TestStatsCostByModelPrice(t *testing.T) {
 	withFakeHome(t) // 会话标题扫描走临时目录，避免误扫真实 home
 	store := newTestStore(t)
-	base := time.Now().Add(-time.Hour).Unix()
+	// 锚定当日：now-1h 在零点后一小时内跑会落到昨天，「今日」断言随之崩掉；
+	// 但也不能早于今天零点太多导致落到未来被窗口过滤，取两者交集
+	nowT := time.Now()
+	dayStart := time.Date(nowT.Year(), nowT.Month(), nowT.Day(), 0, 0, 0, 0, nowT.Location())
+	dayBase := nowT.Add(-time.Hour)
+	if dayBase.Before(dayStart) {
+		dayBase = dayStart
+	}
+	base := dayBase.Unix()
 	// in=1M（未命中）+ out=0.5M + cache=2M
 	// → (1e6×1 + 5e5×4 + 2e6×0.2)/1e6 = 1 + 2 + 0.4 = 3.4 元
 	store.AppendRequestLog(RequestLog{

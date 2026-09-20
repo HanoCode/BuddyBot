@@ -1941,6 +1941,16 @@
   }
 
   // ---------- 免打扰：权限弹窗自动确认（分类开关参考 WorkDaddy「增强」页） ----------
+  // 官方确认 UI 不是「弹窗里的按钮」，而是三处各自独立的控件（均为 React onClick，
+  // 且不一定用 <button>），按选择器逐类识别；文案一律「包含」匹配，不能精确等值：
+  //   1. .approval-menu-item                      工具权限审批菜单项（div，「允许 / 本次会话始终允许 / 拒绝」）
+  //   2. [class*="_optionItem_"]                  InterceptCard 选项（button，文本为「序号+文案」，如「1允许」）
+  //   3. .high-credit-approval-floating__option   积分消耗审批浮框选项（div[role=button]，「1确认」）
+  var CONFIRM_ITEMS = [".approval-menu-item", '[class*="_optionItem_"]', ".high-credit-approval-floating__option"];
+  var ALLOW_TEXT = /允许|准许|同意|确认|继续|运行|执行|approve|allow|confirm|continue|\brun\b|\byes\b/i;
+  // 一票否决：命中即不点，避免把「拒绝，继续在沙箱中运行」这类否定项当成放行
+  var DENY_TEXT = /拒绝|取消|跳过|停止|终止|不再|deny|reject|cancel|skip|\bstop\b/i;
+  // 通用弹窗（官方之外的老式按钮弹窗）仍按「精确文案 + 按钮外观」判定，避免误点页面普通按钮
   var CONFIRM_TEXTS = ["确定", "确认", "允许", "同意", "继续", "好的", "知道了", "始终允许",
     "Allow", "OK", "Confirm", "Accept", "Continue"];
   // 分类开关 → 弹窗文本启发式匹配（弹窗内任意文案命中即放行该弹窗）
@@ -1966,18 +1976,49 @@
     return false;
   }
 
+  function isConfirmItem(el) {
+    for (var i = 0; i < CONFIRM_ITEMS.length; i++) {
+      try { if (el.matches(CONFIRM_ITEMS[i])) return true; } catch (e) {}
+    }
+    return false;
+  }
+
+  // 选项文案：优先取 label 子节点。InterceptCard 的序号是与 label 同级的 span，
+  // 直接读 textContent 会得到「1允许」，永远等不上任何白名单文案。
+  function confirmLabel(el) {
+    var lab = el.querySelector('[class*="optionLabel"],[class*="option-text"],[class*="optionText"]');
+    var t = (lab ? lab.textContent : el.textContent) || "";
+    return t.replace(/^\s*\d+\s*/, "").trim(); // 去掉行首序号
+  }
+
   function isConfirmButton(el) {
-    if (!el || el.tagName !== "BUTTON") return false;
-    var t = (el.textContent || "").trim();
-    if (CONFIRM_TEXTS.indexOf(t) < 0) return false;
-    if (!visible(el) || el.disabled) return false;
+    if (!el || !visible(el) || el.disabled) return false;
+    if (isConfirmItem(el)) {
+      var t = confirmLabel(el);
+      return !!t && !DENY_TEXT.test(t) && ALLOW_TEXT.test(t);
+    }
+    if (el.tagName !== "BUTTON") return false;
+    var t2 = (el.textContent || "").trim();
+    if (CONFIRM_TEXTS.indexOf(t2) < 0) return false;
     var cls = (el.className || "").toLowerCase();
     // 纯文本的「确定」可能是正文，要求它看起来像个按钮
     return cls.indexOf("btn") >= 0 || cls.indexOf("button") >= 0 || cls.indexOf("primary") >= 0 ||
       el.closest('[role="dialog"],[class*="modal"],[class*="dialog"],[class*="popup"],[class*="drawer"]');
   }
 
+  // 确认卡片根节点：分类开关要读「整张卡片」的文案（标题/描述），
+  // 只看选项按钮本身（「1允许」）永远命中不了 file/cmd/del/sys 关键词。
   function dialogRoot(el) {
+    if (isConfirmItem(el)) {
+      var n = el;
+      for (var i = 0; i < 4 && n; i++) {
+        if (n.classList && (n.classList.contains("tool-approval-menu") ||
+          n.classList.contains("high-credit-approval-floating"))) return n;
+        if (typeof n.className === "string" && /_container_/.test(n.className)) return n; // InterceptCard 容器
+        n = n.parentElement;
+      }
+      return el;
+    }
     return el.closest('[role="dialog"],[class*="modal"],[class*="dialog"],[class*="popup"],[class*="drawer"]') || el;
   }
 
@@ -1986,16 +2027,16 @@
     var now = Date.now();
     if (now - lastScan < 600) return;
     lastScan = now;
-    var buttons = document.querySelectorAll("button");
-    for (var i = 0; i < buttons.length; i++) {
-      var b = buttons[i];
+    var cands = document.querySelectorAll(CONFIRM_ITEMS.join(",") + ",button");
+    for (var i = 0; i < cands.length; i++) {
+      var b = cands[i];
       if (!isConfirmButton(b)) continue;
       var root = dialogRoot(b);
       if (seenDialogs.has(root)) continue;
       if (!enhAllows(root.textContent || "")) continue;
       seenDialogs.add(root);
       b.click();
-      send("dnd_clicked", { text: (b.textContent || "").trim() });
+      send("dnd_clicked", { text: confirmLabel(b) || (b.textContent || "").trim() });
       break; // 每轮只点一个，下一轮扫描继续
     }
   }

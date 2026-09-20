@@ -23,6 +23,7 @@ import type {
   ConfigMeta,
   CreateKeyParams,
   CreateKeyResult,
+  CreditDetail,
   CreditLogPage,
   Dashboard,
   GatewayConfig,
@@ -39,6 +40,11 @@ import type {
   AgentApplyResult,
   AgentBackup,
   ApplyParams,
+  PluginStatus,
+  PluginApplyResult,
+  PluginSettings,
+  PluginSlashCommand,
+  PluginBackup,
   OAuthHint,
   OAuthPollResult,
   OfficialUsageReport,
@@ -303,6 +309,44 @@ export const agentsApi = {
   },
 };
 
+// ---------- 插件中心 ----------
+
+export const pluginsApi = {
+  statuses(): Promise<PluginStatus[]> {
+    return call(() => API.PluginsAPI.Statuses().then((r) => r ?? []));
+  },
+  apply(plugin: string, ids: number[] = []): Promise<PluginApplyResult> {
+    native();
+    return API.PluginsAPI.Apply({ plugin, ids }).then((r) => r as PluginApplyResult);
+  },
+  remove(plugin: string, ids: number[] = []): Promise<PluginApplyResult> {
+    native();
+    return API.PluginsAPI.Remove({ plugin, ids }).then((r) => r as PluginApplyResult);
+  },
+  settings(): Promise<PluginSettings> {
+    return call(() => API.PluginsAPI.Settings().then((r) => r ?? { rulesText: "", safetyAllowlist: [] }));
+  },
+  saveSettings(s: PluginSettings): Promise<void> {
+    native();
+    return API.PluginsAPI.SaveSettings(s);
+  },
+  slashCommands(): Promise<PluginSlashCommand[]> {
+    return call(() => API.PluginsAPI.SlashCommands().then((r) => r ?? []));
+  },
+  defaultSettings(): Promise<PluginSettings> {
+    return call(() =>
+      API.PluginsAPI.DefaultSettings().then((r) => r ?? { rulesText: "", safetyAllowlist: [] }),
+    );
+  },
+  backups(): Promise<PluginBackup[]> {
+    return call(() => API.PluginsAPI.Backups().then((r) => r ?? []));
+  },
+  restore(target: string, backupID: string): Promise<number> {
+    native();
+    return API.PluginsAPI.Restore(target, backupID);
+  },
+};
+
 // ---------- 日志 ----------
 
 export const logsApi = {
@@ -314,6 +358,9 @@ export const logsApi = {
   },
   creditLogs(q: LogQuery = {}): Promise<CreditLogPage> {
     return call(() => API.LogsAPI.GetCreditLogs(q));
+  },
+  creditDetail(q: LogQuery = {}): Promise<CreditDetail> {
+    return call(() => API.LogsAPI.GetCreditDetail(q));
   },
   auditLogs(q: LogQuery = {}): Promise<AuditLogPage> {
     return call(() => API.LogsAPI.GetAuditLogs(q));

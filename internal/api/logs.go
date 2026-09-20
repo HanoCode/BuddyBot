@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -38,6 +39,9 @@ type LogQuery struct {
 	Status   int    `json:"status,omitempty"`
 	StatusIn []int  `json:"statusIn,omitempty"`
 	Type     string `json:"type,omitempty"` // 任务日志类型
+	// UID 账号精确匹配。只有带账号维度的日志（任务日志）认这个字段，
+	// 请求日志 / 积分流水 / 审计日志会忽略它——它们没有 uid 归属，硬凑等于假过滤。
+	UID      string `json:"uid,omitempty"`
 	Page     int    `json:"page,omitempty"`
 	PageSize int    `json:"pageSize,omitempty"`
 }
@@ -132,6 +136,9 @@ func (l *LogsAPI) GetTaskLogs(ctx context.Context, q LogQuery) (*TaskLogPage, er
 		if q.Type != "" && lg.Type != q.Type {
 			continue
 		}
+		if q.UID != "" && lg.UID != q.UID {
+			continue
+		}
 		if q.Status != 0 && !matchTaskStatus(lg.Status, q.Status) {
 			continue
 		}
@@ -220,7 +227,7 @@ func (l *LogsAPI) Export(ctx context.Context, format string, scope string, q Log
 	var content []byte
 	count := 0
 	if scope == "task" {
-		res, _ := l.GetTaskLogs(ctx, LogQuery{From: q.From, To: q.To, Keyword: q.Keyword, Type: q.Type, Status: q.Status, Page: 1, PageSize: 100000})
+		res, _ := l.GetTaskLogs(ctx, LogQuery{From: q.From, To: q.To, Keyword: q.Keyword, Type: q.Type, UID: q.UID, Status: q.Status, Page: 1, PageSize: 100000})
 		count = len(res.Items)
 		content = marshalExport(format, taskHeaders(), toTaskRows(res.Items))
 	} else {
@@ -276,6 +283,152 @@ func (l *LogsAPI) GetCreditLogs(ctx context.Context, q LogQuery) (*CreditLogPage
 	}
 	page, size, items := paginate(filtered, q.Page, q.PageSize)
 	return &CreditLogPage{Items: items, Total: len(filtered), Page: page, PageSize: size}, nil
+}
+
+// CreditDetailTask 按任务类型的领取积分汇总
+type CreditDetailTask struct {
+	Type    string `json:"type"`
+	Count   int    `json:"count"`   // 有领取积分的执行次数
+	Credits int    `json:"credits"` // 累计领取积分
+}
+
+// CreditDetailDay 按天的领取积分汇总（本地时区，日期格式 2006-01-02）
+type CreditDetailDay struct {
+	Date    string `json:"date"`
+	Count   int    `json:"count"`
+	Credits int    `json:"credits"`
+}
+
+// CreditDetail 任务领取积分明细
+//
+// 口径：只统计上游**明确返回了积分数值**的领取动作（成长任务 reward_credit /
+// 连登档位 credit / 抽奖 credit 奖品 / 礼包补偿 credit）。签到本金、开学季领奖、
+// 盲盒物品、trial 加油包等上游不返回数值的动作不计入——它们不写 0 充数，
+// 而是由 Runs / NoAmount 如实计数，实际到账总额以「积分流水」（真实余额观测）为准。
+//
+// 筛选分两层，Today / Last7d 只吃第一层：
+//   - 维度筛选（UID / Type / Keyword）：三张卡都按它收窄，保证同一屏内口径一致；
+//   - 时间范围（From / To）：只作用于 Credits / Runs / NoAmount / ByTask / ByDay / Items。
+//
+// 这样在日志页不筛选时三张卡就是全量的「今天 / 近 7 天」，而账号弹窗里带上 uid 后，
+// 今日卡显示的是**该账号**今天领了多少，不会出现「看 A 账号的明细却显示全局今日」。
+type CreditDetail struct {
+	Today    int                `json:"today"`    // 今日领取（不受查询范围影响）
+	Last7d   int                `json:"last7d"`   // 近 7 天领取（含今日）
+	Credits  int                `json:"credits"`  // 查询范围内领取合计
+	Runs     int                `json:"runs"`     // 查询范围内执行记录条数
+	NoAmount int                `json:"noAmount"` // 其中未返回积分数值的条数
+	ByTask   []CreditDetailTask `json:"byTask"`
+	ByDay    []CreditDetailDay  `json:"byDay"`
+	Items    []core.TaskLog     `json:"items"` // 仅 credits > 0，新 → 旧，分页
+	ItemHits int                `json:"itemHits"`
+	Page     int                `json:"page"`
+	PageSize int                `json:"pageSize"`
+}
+
+// GetCreditDetail 任务领取积分明细：汇总（今日 / 近 7 天 / 范围内）+ 按任务 / 按天 + 逐条明细。
+// 账号（UID 精确）/ 任务类型 / 关键字（账号 / 任务 / 说明）过滤与任务日志同口径；
+// 今日与近 7 天跟随这三个维度收窄、忽略时间范围，详见 CreditDetail 的注释。
+func (l *LogsAPI) GetCreditDetail(ctx context.Context, q LogQuery) (*CreditDetail, error) {
+	all := l.service.Store().ListTaskLogs() // 新 → 旧
+	kw := strings.ToLower(strings.TrimSpace(q.Keyword))
+	localDay := func(ts int64) string { return time.Unix(ts, 0).Format("2006-01-02") }
+	today := time.Now().Format("2006-01-02")
+	weekStart := time.Now().AddDate(0, 0, -6).Format("2006-01-02")
+
+	// 维度筛选：账号 / 任务类型 / 关键字。今日与近 7 天也走这一层。
+	dimMatch := func(lg core.TaskLog) bool {
+		if q.UID != "" && lg.UID != q.UID {
+			return false
+		}
+		if q.Type != "" && lg.Type != q.Type {
+			return false
+		}
+		if kw != "" {
+			hit := false
+			for _, f := range []string{lg.UID, lg.Type, lg.Message, lg.Trigger} {
+				if strings.Contains(strings.ToLower(f), kw) {
+					hit = true
+					break
+				}
+			}
+			if !hit {
+				return false
+			}
+		}
+		return true
+	}
+
+	out := &CreditDetail{ByTask: []CreditDetailTask{}, ByDay: []CreditDetailDay{}, Items: []core.TaskLog{}}
+	byTask := map[string]*CreditDetailTask{}
+	byDay := map[string]*CreditDetailDay{}
+	earned := make([]core.TaskLog, 0)
+
+	// 今日 / 近 7 天：跟随维度筛选，但不随时间范围变化（选了「近 1 小时」也该看到今日总量）
+	for _, lg := range all {
+		if lg.Credits <= 0 || !dimMatch(lg) {
+			continue
+		}
+		day := localDay(lg.TS)
+		if day == today {
+			out.Today += lg.Credits
+		}
+		if day >= weekStart {
+			out.Last7d += lg.Credits
+		}
+	}
+
+	for _, lg := range all {
+		if q.From > 0 && lg.TS < q.From {
+			continue
+		}
+		if q.To > 0 && lg.TS > q.To {
+			continue
+		}
+		if !dimMatch(lg) {
+			continue
+		}
+		out.Runs++
+		if lg.Credits <= 0 {
+			out.NoAmount++
+			continue
+		}
+		out.Credits += lg.Credits
+		if t := byTask[lg.Type]; t == nil {
+			byTask[lg.Type] = &CreditDetailTask{Type: lg.Type, Count: 1, Credits: lg.Credits}
+		} else {
+			t.Count++
+			t.Credits += lg.Credits
+		}
+		day := localDay(lg.TS)
+		if d := byDay[day]; d == nil {
+			byDay[day] = &CreditDetailDay{Date: day, Count: 1, Credits: lg.Credits}
+		} else {
+			d.Count++
+			d.Credits += lg.Credits
+		}
+		earned = append(earned, lg)
+	}
+
+	for _, t := range byTask {
+		out.ByTask = append(out.ByTask, *t)
+	}
+	// 领取多的排前面，同额按类型名稳定排序（结果可复现，不依赖 map 遍历顺序）
+	sort.Slice(out.ByTask, func(i, j int) bool {
+		if out.ByTask[i].Credits != out.ByTask[j].Credits {
+			return out.ByTask[i].Credits > out.ByTask[j].Credits
+		}
+		return out.ByTask[i].Type < out.ByTask[j].Type
+	})
+	for _, d := range byDay {
+		out.ByDay = append(out.ByDay, *d)
+	}
+	sort.Slice(out.ByDay, func(i, j int) bool { return out.ByDay[i].Date > out.ByDay[j].Date })
+
+	out.ItemHits = len(earned)
+	page, size, items := paginate(earned, q.Page, q.PageSize)
+	out.Page, out.PageSize, out.Items = page, size, items
+	return out, nil
 }
 
 // AuditLogPage 审计日志分页结果
@@ -354,14 +507,14 @@ func toReqRows(logs []RequestLog) [][]string {
 }
 
 func taskHeaders() []string {
-	return []string{"time", "type", "trigger", "uid", "status", "message", "duration_ms"}
+	return []string{"time", "type", "trigger", "uid", "status", "credits", "message", "duration_ms"}
 }
 
 func toTaskRows(logs []TaskLog) [][]string {
 	rows := make([][]string, 0, len(logs))
 	for _, l := range logs {
 		rows = append(rows, []string{
-			l.Time, l.Type, l.Trigger, l.UID, l.Status, l.Message, fmt.Sprintf("%.0f", l.Duration),
+			l.Time, l.Type, l.Trigger, l.UID, l.Status, fmt.Sprint(l.Credits), l.Message, fmt.Sprintf("%.0f", l.Duration),
 		})
 	}
 	return rows

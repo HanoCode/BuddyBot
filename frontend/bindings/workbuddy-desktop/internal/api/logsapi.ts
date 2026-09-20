@@ -36,6 +36,15 @@ export function GetAuditLogs(q: $models.LogQuery): $CancellablePromise<$models.A
 }
 
 /**
+ * GetCreditDetail 任务领取积分明细：汇总（今日 / 近 7 天 / 范围内）+ 按任务 / 按天 + 逐条明细。
+ * 账号（UID 精确）/ 任务类型 / 关键字（账号 / 任务 / 说明）过滤与任务日志同口径；
+ * 今日与近 7 天跟随这三个维度收窄、忽略时间范围，详见 CreditDetail 的注释。
+ */
+export function GetCreditDetail(q: $models.LogQuery): $CancellablePromise<$models.CreditDetail | null> {
+    return $Call.ByID(3348338821, q);
+}
+
+/**
  * GetCreditLogs 积分变动流水（真实余额观测差值，时间/账号过滤 + 分页）
  */
 export function GetCreditLogs(q: $models.LogQuery): $CancellablePromise<$models.CreditLogPage | null> {

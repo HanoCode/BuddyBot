@@ -15,6 +15,7 @@ import Tokens from "./pages/Tokens";
 import ClientTokens from "./pages/ClientTokens";
 import Accounts from "./pages/Accounts";
 import Agents from "./pages/Agents";
+import Plugins from "./pages/Plugins";
 import Skills from "./pages/Skills";
 import Prompts from "./pages/Prompts";
 import Keys from "./pages/Keys";
@@ -32,6 +33,7 @@ function AnimatedRoutes() {
         <Route path="/client-tokens" element={<ClientTokens />} />
         <Route path="/accounts" element={<Accounts />} />
         <Route path="/agents" element={<Agents />} />
+        <Route path="/plugins" element={<Plugins />} />
         <Route path="/skills" element={<Skills />} />
         <Route path="/prompts" element={<Prompts />} />
         <Route path="/keys" element={<Keys />} />

@@ -60,6 +60,8 @@ export const en: Record<string, string> = {
   "点击查看失败详情": "Click to view failure details",
   "查看账号详情（{uid}）": "View account details ({uid})",
   "详情": "Details",
+  "领取 {n} 分": "Earned {n} pts",
+  "本轮各账号领取到的积分合计（仅统计上游明确返回数值的动作，明细见日志页「积分明细」）": "Total credits earned by all accounts in this run (counts only actions where the upstream returned an explicit amount; see \"Credit Details\" on the Logs page for the breakdown)",
 
   // ===== 工具栏 / 表格 =====
   "搜索 UID / 昵称 / 凭证文件": "Search UID / nickname / credential file",
@@ -239,4 +241,17 @@ export const en: Record<string, string> = {
   "一键导入": "Import",
   "已导入客户端登录账号": "Client login account imported",
   "导入失败": "Import failed",
+
+  // ===== 领取积分明细弹窗（CreditDetailDialog，与日志页共用同一后端口径） =====
+  "领取积分明细": "Credits earned",
+  "查看领取积分明细": "View earned credits",
+  "今日 / 近 7 天 / 按任务 / 逐条": "Today / 7 days / by task / itemized",
+  "以下只统计该账号的领取动作": "Counts only this account's claim actions",
+  "累计合计": "Total",
+  "按天汇总": "By day",
+  "最近 {n} 天": "last {n} days",
+  "该账号还没有领取到积分的记录（签到 / 成长任务 / 连登 / 抽奖等领取动作会记在这里）": "No earned-credit records for this account yet (check-in, growth tasks, streak, lottery and similar claims are recorded here)",
+  "在日志页查看全部": "View all in Logs",
+  "仅显示最近 {n} 条，更多请到日志页「积分明细」按账号查看。": "Showing the latest {n} records only; see Logs → Credits earned for more by account.",
+  "本轮领取 {n} 分，点击查看该账号的领取明细": "Earned {n} credits this run; click to view this account's details",
 };

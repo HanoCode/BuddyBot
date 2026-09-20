@@ -49,6 +49,10 @@ func (s *Service) SetAwake(on bool) error {
 // AwakeActive 当前是否处于防休眠状态
 func (s *Service) AwakeActive() bool { return s.awake.active }
 
+// StopAwake 停止防休眠断言：MCP 子命令等常驻后台形态使用——
+// server 生命周期等于 agent 会话时长，不应在无人值守时阻止系统休眠
+func (s *Service) StopAwake() { s.awake.stop() }
+
 // AwakeNote 实现方式说明（如 "caffeinate"）
 func (s *Service) AwakeNote() string { return s.awake.note }
 

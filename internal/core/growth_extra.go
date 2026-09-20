@@ -1,9 +1,11 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -155,10 +157,34 @@ func (c *upstreamClient) UseMakeupCardIfMissed(cred *UpstreamCred) (string, erro
 	return "补签 " + yesterday + " 成功，连签保住", nil
 }
 
+// creditAmountOf 把上游返回的 credit 字段（数字或数字字符串）转成整数分。
+// 非数值（对象 / 布尔 / null / 非数字串）返回 false，由调用方降级为纯文本说明——
+// 不猜数值，宁可只报「领取成功」也不写一个凭空的分数。
+func creditAmountOf(v any) (int, bool) {
+	switch t := v.(type) {
+	case json.Number:
+		if n, err := t.Int64(); err == nil {
+			return int(n), true
+		}
+		if f, err := t.Float64(); err == nil {
+			return int(f), true
+		}
+	case float64:
+		return int(t), true
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(t)); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
 // ClaimGiftAndCompensation 礼包补偿：新手礼包 + 补偿领取（均幂等，无可领时上游
 // 拒绝属正常态，静默跳过；成功返回 "+N分" 说明）。
-func (c *upstreamClient) ClaimGiftAndCompensation(cred *UpstreamCred) string {
+// 第二个返回值是本次实际领取到的积分合计（只有拿到确切数值才累加）。
+func (c *upstreamClient) ClaimGiftAndCompensation(cred *UpstreamCred) (string, int) {
 	var notes []string
+	credits := 0
 	claim := func(path, name string) {
 		req, err := http.NewRequest(http.MethodPost, c.billingBaseOf(cred.Realm)+path, strings.NewReader("{}"))
 		if err != nil {
@@ -169,16 +195,25 @@ func (c *upstreamClient) ClaimGiftAndCompensation(cred *UpstreamCred) string {
 		if err != nil {
 			return // 无可领 / 幂等拒绝：正常态
 		}
+		// credit 可能是数字或字符串：走 UseNumber 解析，不让数值经 float64 中转失真
 		var resp struct {
 			Credit any `json:"credit"`
 		}
-		if json.Unmarshal(data, &resp) == nil && resp.Credit != nil {
-			notes = append(notes, fmt.Sprintf("%s +%v分", name, resp.Credit))
-		} else {
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.UseNumber()
+		if dec.Decode(&resp) != nil || resp.Credit == nil {
 			notes = append(notes, name+" 领取成功")
+			return
 		}
+		n, ok := creditAmountOf(resp.Credit)
+		if !ok {
+			notes = append(notes, fmt.Sprintf("%s +%v分", name, resp.Credit))
+			return
+		}
+		notes = append(notes, fmt.Sprintf("%s +%d分", name, n))
+		credits += n
 	}
 	claim(claimGiftPath, "新手礼包")
 	claim(claimCompensationPath, "补偿领取")
-	return strings.Join(notes, "、")
+	return strings.Join(notes, "、"), credits
 }

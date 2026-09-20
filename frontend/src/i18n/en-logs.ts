@@ -101,4 +101,17 @@ export const en: Record<string, string> = {
   "是": "Yes",
   "否": "No",
   "关闭": "Close",
+  // 积分明细（任务领取口径）
+  "积分明细": "Credit Details",
+  "关键字 / 账号 / 领取说明": "Keyword / Account / Claim Note",
+  "今日领取": "Earned Today",
+  "近 7 天领取": "Earned (Last 7 Days)",
+  "筛选范围内合计": "Total in Range",
+  "分": "pts",
+  "{n} 次": "{n} runs",
+  "领取积分": "Credits Earned",
+  "领取说明": "Claim Note",
+  "没有领取到积分的记录（签到 / 成长任务 / 连登 / 抽奖等领取动作会记在这里）": "No credit-earning records yet (check-in / growth tasks / streak tiers / lottery claims are recorded here)",
+  "仅统计上游明确返回积分数值的领取动作（成长任务奖励 / 连登档位 / 抽奖积分 / 礼包补偿）。签到本金、开学季领奖、盲盒物品、试用加油包等上游不返回数值的动作不计入——当前筛选范围内另有 {n} 条执行记录未返回数值。实际到账总额请以「积分流水」的真实余额观测为准。":
+    "Counts only claim actions where the upstream explicitly returned a credit amount (growth task rewards / streak tiers / lottery credit prizes / gift compensation). Actions that return no amount — check-in principal, back-to-school claims, blind-box items, trial boosts — are not counted; {n} execution records in the current range returned no amount. For the actual credited total, rely on the real balance observations under \"Credit Flow\".",
 };

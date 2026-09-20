@@ -358,6 +358,7 @@ export interface Config {
     "keep_awake": boolean;
     "inject": InjectConfig;
     "skillhub": SkillHubConfig;
+    "plugins": PluginsConfig;
 }
 
 /**
@@ -790,6 +791,128 @@ export interface Overview {
     "creditsUnknown": number;
     "firstTs": number;
     "lastTs": number;
+}
+
+/**
+ * PluginApplyResult 安装/卸载结果（复用智能体接入的备份语义）
+ */
+export interface PluginApplyResult {
+    "plugin": string;
+    "backupDir": string;
+    "files": string[] | null;
+    "removed": string[] | null;
+    "detail"?: string;
+}
+
+/**
+ * PluginBackup 一条插件写入产生的备份（用于页面上的回滚入口）
+ */
+export interface PluginBackup {
+    /**
+     * 备份目录名，如 plugin-rules-claude-code
+     */
+    "target": string;
+
+    /**
+     * 由 target 解析出的插件 ID
+     */
+    "plugin": string;
+
+    /**
+     * 备份批次（目录名即时间戳）
+     */
+    "id": string;
+
+    /**
+     * 该批次包含的原始文件名
+     */
+    "files": string[] | null;
+
+    /**
+     * = ID（20260102-150405 形式）
+     */
+    "createdAt": string;
+}
+
+/**
+ * PluginSettings 用户可编辑的插件配置（对应 Config.Plugins，供前端读写）
+ */
+export interface PluginSettings {
+    "rulesText": string;
+    "safetyAllowlist": string[] | null;
+}
+
+/**
+ * PluginSlashCommand 一条可安装的提效指令
+ */
+export interface PluginSlashCommand {
+    "id": number;
+    "title": string;
+    "category": string;
+
+    /**
+     * 安装后的命令名（不含 /）
+     */
+    "name": string;
+    "installed": boolean;
+    "path": string;
+}
+
+/**
+ * PluginStatus 单项插件总览
+ */
+export interface PluginStatus {
+    "id": string;
+    "name": string;
+    "description": string;
+
+    /**
+     * 任一目标已写入
+     */
+    "installed": boolean;
+    "targets": PluginTargetStatus[] | null;
+
+    /**
+     * 补充说明（如已安装的命令数）
+     */
+    "detail"?: string;
+}
+
+/**
+ * PluginTargetStatus 单个客户端上的接入状态
+ */
+export interface PluginTargetStatus {
+    "id": string;
+    "name": string;
+    "path": string;
+
+    /**
+     * 客户端本身已安装（目录存在）
+     */
+    "installed": boolean;
+
+    /**
+     * 插件已写入该客户端
+     */
+    "applied": boolean;
+    "note"?: string;
+}
+
+/**
+ * PluginsConfig 插件中心配置（只存用户意图，不存安装状态）
+ */
+export interface PluginsConfig {
+    /**
+     * RulesText 编码规范源文本：同步到各客户端规则文件（标记块内），
+     * 用户维护一份，多端一致。
+     */
+    "rules_text": string;
+
+    /**
+     * SafetyAllowlist 安全命令放行白名单（命令前缀）。命中且不含 shell 组合符号时，
+     * PreToolUse 钩子直接放行，减少 agent 干活时的确认弹窗。
+     */
+    "safety_allowlist": string[] | null;
 }
 
 /**
@@ -1283,6 +1406,15 @@ export interface TaskLog {
      * 耗时 ms
      */
     "duration": number;
+
+    /**
+     * Credits 本次该账号领取到的积分合计（仅统计上游明确返回积分数量的动作：
+     * 成长任务 reward_credit / 连登档位 credit / 抽奖 credit 奖品 / 礼包补偿 credit）。
+     * 这是「动作级领取记录」，与 CreditLog 的「余额观测差值」口径不同：
+     * 上游报成功但实际未到账、或未返回数值的动作（签到本金、盲盒物品、trial 加油包）
+     * 都不计入这里。两者对不上时应以 CreditLog 为准，不要互相覆盖。
+     */
+    "credits": number;
 }
 
 /**
@@ -1305,6 +1437,11 @@ export interface TaskRun {
     "success": number;
     "failed": number;
     "skipped": number;
+
+    /**
+     * 本轮全部账号领取到的积分合计
+     */
+    "credits": number;
     "details": TaskRunDetail[] | null;
 }
 
@@ -1315,6 +1452,11 @@ export interface TaskRunDetail {
     "uid": string;
     "status": string;
     "message": string;
+
+    /**
+     * Credits 该账号本次领取到的积分合计（动作级，口径见 TaskLog.Credits 注释）
+     */
+    "credits": number;
 }
 
 /**
@@ -1326,6 +1468,11 @@ export interface TaskStat {
     "success": number;
     "failed": number;
     "skipped": number;
+
+    /**
+     * 该任务类型累计领取积分（上游明确返回数值的动作口径）
+     */
+    "credits": number;
 }
 
 /**

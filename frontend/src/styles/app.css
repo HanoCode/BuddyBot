@@ -161,6 +161,8 @@ body {
 .shell.collapsed .nav-badge { display: none; }
 .shell.collapsed .brand { justify-content: center; padding: 0; }
 .shell.collapsed .nav-item { justify-content: center; }
+/* 折叠态内容区仅 44px，再去掉 6px 补偿否则图标会比品牌 logo 偏左 3px（不同轴心） */
+.shell.collapsed .nav-scroll { margin-right: 0; padding-right: 0; }
 
 .brand { display: flex; align-items: center; gap: 11px; padding: 4px 8px 16px; }
 .logo-mark {
@@ -180,6 +182,18 @@ body {
 }
 .brand-text b .tb-ver { margin-left: 0; vertical-align: 0; }
 .brand-text small { color: rgba(235,238,245,.42); font-size: 11px; }
+
+/* 菜单区独立滚动：菜单变多 / 窗口过矮时只滚这一块，品牌区与底部卡片保持固定。
+   min-height:0 是 flex 子项能真正收缩出滚动条的前提（默认 min-height:auto 会顶开容器）；
+   负 margin + 等量 padding 把 6px 滚动条贴到侧边栏右边距内，菜单项宽度与改动前一致。 */
+.nav-scroll {
+  flex: 1; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  margin-right: -6px; padding-right: 6px;
+}
+/* 侧边栏底色恒为深色（两种主题下都是），滚动条用白色透明档比全局 --outline-2 更柔和 */
+.nav-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); }
+.nav-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.28); }
 
 .nav-section { margin-top: 10px; }
 .nav-label {
@@ -206,7 +220,8 @@ body {
   background: var(--accent); color: #fff;
   border-radius: 999px; padding: 1.5px 7px;
 }
-.side-foot { margin-top: auto; padding-top: 12px; }
+/* 底部卡片固定在侧边栏底部：flex:none 保证空间不足时不被压缩，滚动只发生在 .nav-scroll */
+.side-foot { flex: none; padding-top: 12px; }
 .dl-card {
   width: 100%; display: flex; align-items: center; gap: 10px;
   background: rgba(255,255,255,.05);
@@ -1201,3 +1216,145 @@ textarea.input { height: auto; padding: 10px 12px; resize: none; }
   user-select: text;
 }
 .pt-text { font-size: 12.5px; line-height: 1.7; color: var(--text-2); user-select: text; }
+
+/* ============ 插件中心 ============ */
+.plug-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+.plug-card {
+  background: var(--surface); border: 1px solid var(--outline); border-radius: var(--r-md);
+  padding: 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow-1);
+}
+.plug-head { display: flex; align-items: center; gap: 10px; }
+.plug-ico {
+  width: 30px; height: 30px; flex: none; border-radius: var(--r-sm);
+  display: grid; place-items: center; background: var(--primary-soft); color: var(--primary);
+}
+.plug-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.plug-title h3 { margin: 0; font-size: 13.5px; font-weight: 600; color: var(--text-1); }
+.chip-on { background: var(--green-soft); color: var(--green); }
+.chip-off { background: var(--surface-3); color: var(--text-3); }
+.plug-desc { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-2); }
+.plug-targets { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.plug-targets li { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); }
+.plug-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--text-3); }
+.plug-dot[data-on="1"] { background: var(--green); }
+.plug-tname { color: var(--text-1); }
+.plug-targets .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plug-detail { word-break: break-all; }
+.plug-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 4px; }
+
+/* 插件中心 · 配置区（规则文本 + 放行白名单） */
+.plug-config { margin-bottom: 14px; display: flex; flex-direction: column; gap: 12px; }
+.plug-config h3 { margin: 0; font-size: 13.5px; font-weight: 600; color: var(--text-1); }
+.plug-field { display: flex; flex-direction: column; gap: 6px; }
+.plug-field > span { font-size: 12px; color: var(--text-2); }
+.plug-config textarea, .plug-add input {
+  width: 100%; box-sizing: border-box; background: var(--surface-2); color: var(--text-1);
+  border: 1px solid var(--outline); border-radius: var(--r-sm); padding: 8px 10px;
+  font-size: 12px; font-family: var(--mono); line-height: 1.6; resize: vertical;
+}
+.plug-config textarea:focus, .plug-add input:focus { outline: none; border-color: var(--primary); }
+.plug-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.plug-chip {
+  display: inline-flex; align-items: center; gap: 4px; background: var(--surface-3); color: var(--text-2);
+  border: 1px solid var(--outline); border-radius: 999px; padding: 3px 5px 3px 10px;
+  font-size: 11.5px; font-family: var(--mono);
+}
+.plug-chip button {
+  border: 0; background: transparent; color: var(--text-3); cursor: pointer;
+  display: grid; place-items: center; padding: 2px; border-radius: 50%;
+}
+.plug-chip button:hover { color: var(--red); background: var(--surface); }
+.plug-add { display: flex; gap: 8px; align-items: center; }
+.plug-add input { flex: 1; }
+.plug-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.plug-warn { display: flex; align-items: flex-start; gap: 6px; color: var(--amber); font-size: 12px; line-height: 1.6; }
+
+/* 插件中心 · 提效指令清单 */
+.plug-slash { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+.plug-slash-list { max-height: 320px; overflow: auto; border: 1px solid var(--outline); border-radius: var(--r-sm); }
+.plug-slash-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--outline); }
+.plug-slash-row:last-child { border-bottom: 0; }
+.plug-slash-row .tt { flex: 1; min-width: 0; font-size: 12px; color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plug-slash-row .nm { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+
+/* 插件中心 · 备份与回滚 */
+.plug-backup-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--outline); }
+.plug-backup-row:last-child { border-bottom: 0; }
+.plug-backup-row .tt { flex: 1; min-width: 0; font-size: 12px; color: var(--text-1); }
+.plug-backup-row .nm { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+
+/* ============ 日志 · 积分明细（任务领取口径） ============
+   只展示上游明确返回积分数值的领取动作；未返回数值的执行记录由说明行如实计数。
+   加色沿用本页「积分流水」既有口径：进账为绿、消耗为红。 */
+.earn-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 14px 16px 0; }
+.earn-card {
+  background: var(--surface-2); border: 1px solid var(--outline);
+  border-radius: var(--r-md); padding: 12px 14px;
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+}
+.earn-card small { flex-basis: 100%; font-size: 11.5px; font-weight: 600; color: var(--text-2); }
+.earn-card b { font-family: var(--mono); font-size: 20px; font-weight: 700; color: var(--text-1); letter-spacing: -.01em; }
+.earn-card i { font-style: normal; font-size: 11.5px; color: var(--text-3); }
+.earn-tags { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px 0; }
+.earn-tag {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--text-2);
+  background: var(--surface-3); border: 1px solid var(--outline);
+  border-radius: 999px; padding: 4px 11px;
+}
+.earn-tag b { font-family: var(--mono); font-weight: 700; color: var(--green); }
+.earn-tag i { font-style: normal; font-size: 11px; color: var(--text-3); }
+.earn-note {
+  margin: 12px 16px; padding: 9px 12px;
+  font-size: 11.5px; line-height: 1.65; color: var(--text-2);
+  background: var(--amber-soft); border: 1px solid var(--outline); border-radius: var(--r-sm);
+}
+.tbl .earn-amount { font-family: var(--mono); font-weight: 700; color: var(--green); }
+
+/* 领取积分明细弹窗（CreditDetailDialog，账号管理页共用三处入口） */
+.dialog.cd-dlg { width: 660px; }
+.cd-scope {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 10px; font-size: 11.8px; color: var(--text-2);
+}
+.cd-scope svg { flex: none; color: var(--green); }
+/* .earn-* 原本按日志页卡片内边距（左右 16px）设计，放进弹窗后由 .dlg-body 统一给边距，
+   这里把内层补偿清零，否则数字会比标题多缩进一截、看着歪 */
+.cd-dlg .earn-cards, .cd-dlg .earn-tags { padding-left: 0; padding-right: 0; }
+.cd-dlg .earn-cards { padding-top: 0; }
+.cd-dlg .earn-tags { padding-top: 10px; }
+.cd-dlg .earn-note { margin: 10px 0 12px; }
+
+/* 按天汇总：迷你条形列表 */
+.cd-days { display: flex; flex-direction: column; gap: 5px; margin: 12px 0 0; }
+.cd-days-h { display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; font-weight: 600; color: var(--text-2); }
+.cd-days-h .muted { font-size: 11px; font-weight: 400; }
+.cd-day { display: grid; grid-template-columns: 42px minmax(0, 1fr) 62px 40px; align-items: center; gap: 8px; font-size: 11.8px; }
+.cd-day-d { color: var(--text-3); }
+.cd-day-b { height: 6px; border-radius: 999px; overflow: hidden; background: var(--surface-3); }
+.cd-day-b i { display: block; height: 100%; border-radius: 999px; background: var(--green); }
+.cd-day-c { color: var(--text-3); text-align: right; }
+.cd-more { margin: 10px 0 0; font-size: 11.5px; color: var(--text-3); }
+
+/* 账号详情里通往领取明细的入口行（在 .kv-grid 里横跨两列） */
+.cd-entry {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 11px; border-radius: 9px; cursor: pointer; text-align: left;
+  border: 1px solid var(--outline); background: var(--surface-2);
+  color: var(--text-1); font-size: 12.2px; font-weight: 600;
+  transition: border-color .15s var(--ease);
+}
+.cd-entry:hover { border-color: var(--primary); }
+.cd-entry svg:first-child { flex: none; color: var(--green); }
+.cd-entry-hint { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--text-3); }
+.cd-entry-go { flex: none; color: var(--text-3); }
+
+/* 任务结果明细行里的「本轮领取 n 分」，点开该账号明细 */
+.td-earn {
+  flex: none; display: inline-flex; align-items: center;
+  padding: 1px 7px; border-radius: 999px; cursor: pointer;
+  border: 1px solid transparent; background: transparent;
+  font-family: var(--mono); font-size: 11.5px; font-weight: 700; color: var(--green);
+}
+.td-earn:hover { border-color: var(--green); background: var(--surface-2); }

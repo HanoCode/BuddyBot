@@ -32,6 +32,8 @@ type TaskRunDetail struct {
 	UID     string `json:"uid"`
 	Status  string `json:"status"`
 	Message string `json:"message"`
+	// Credits 该账号本次领取到的积分合计（动作级，口径见 TaskLog.Credits 注释）
+	Credits int `json:"credits"`
 }
 
 // TaskRun 一次任务运行的真实结果
@@ -44,6 +46,7 @@ type TaskRun struct {
 	Success   int             `json:"success"`
 	Failed    int             `json:"failed"`
 	Skipped   int             `json:"skipped"`
+	Credits   int             `json:"credits"` // 本轮全部账号领取到的积分合计
 	Details   []TaskRunDetail `json:"details"`
 }
 
@@ -445,6 +448,7 @@ func (s *Scheduler) runForAccounts(taskType, trigger string, uids []string, exec
 		}
 		run.Details = append(run.Details, detail)
 		run.Total++
+		run.Credits += detail.Credits
 		switch detail.Status {
 		case TaskSuccess:
 			run.Success++
@@ -457,11 +461,13 @@ func (s *Scheduler) runForAccounts(taskType, trigger string, uids []string, exec
 			ID: NewID("t"), TS: time.Now().Unix(), Time: Now(), Type: taskType,
 			Trigger: trigger, UID: a.UID, Status: detail.Status,
 			Message: detail.Message, Duration: float64(time.Since(start).Microseconds()) / 1000.0,
+			Credits: detail.Credits,
 		})
 		EmitEvent(EventTaskProgress, map[string]any{
 			"type": taskType, "trigger": trigger,
 			"index": i + 1, "total": len(targets),
 			"uid": a.UID, "status": detail.Status, "message": detail.Message,
+			"credits": detail.Credits,
 		})
 	}
 	run.Duration = float64(time.Since(start).Microseconds()) / 1000.0
@@ -480,6 +486,7 @@ func (s *Scheduler) runForAccounts(taskType, trigger string, uids []string, exec
 	EmitEvent(EventTaskCompleted, map[string]any{
 		"type": taskType, "trigger": trigger, "total": run.Total,
 		"success": run.Success, "failed": run.Failed, "skipped": run.Skipped,
+		"credits": run.Credits,
 	})
 	s.svc.MirrorPushState()
 	return run
@@ -921,10 +928,14 @@ func (s *Scheduler) doCheckin(a Account) TaskRunDetail {
 	if res.Already {
 		msg = "今天已签到（上游确认）"
 	}
-	if note := s.claimGrowthRewards(cred); note != "" {
+	note, credits := s.claimGrowthRewards(cred)
+	if note != "" {
 		msg += "；" + note
 	}
-	return TaskRunDetail{UID: a.UID, Status: TaskSuccess, Message: msg}
+	if credits > 0 {
+		msg += fmt.Sprintf("（本次领取 %d 分）", credits)
+	}
+	return TaskRunDetail{UID: a.UID, Status: TaskSuccess, Message: msg, Credits: credits}
 }
 
 // doTrial global 账号领取一次性试用加油包（幂等：已领过视为正常）。
@@ -941,8 +952,10 @@ func (s *Scheduler) doTrial(a Account, cred *UpstreamCred) TaskRunDetail {
 
 // claimGrowthRewards 兑换当月已达标未领的连登奖励档位，并抽完可用抽奖次数；
 // 无可领项且无抽奖次数返回空串。各子动作失败不静默：原因带回任务消息。
-func (s *Scheduler) claimGrowthRewards(cred *UpstreamCred) string {
+// 第二个返回值是本次实际领取到的积分合计（只累加上游明确返回数量的动作）。
+func (s *Scheduler) claimGrowthRewards(cred *UpstreamCred) (string, int) {
 	var notes []string
+	credits := 0
 	if rs, err := s.up.FetchGrowthRedemption(cred); err != nil {
 		notes = append(notes, "奖励档位查询失败: "+err.Error())
 	} else {
@@ -957,6 +970,7 @@ func (s *Scheduler) claimGrowthRewards(cred *UpstreamCred) string {
 				continue // 单档失败不影响其他档
 			}
 			claimed = append(claimed, fmt.Sprintf("%s(+%d分)", tier.Tier, tier.Credit))
+			credits += tier.Credit
 		}
 		if len(claimed) > 0 {
 			notes = append(notes, "连登奖励已兑换: "+strings.Join(claimed, " "))
@@ -965,8 +979,9 @@ func (s *Scheduler) claimGrowthRewards(cred *UpstreamCred) string {
 			notes = append(notes, "兑换失败: "+strings.Join(failed, " "))
 		}
 	}
-	if note := s.drawLottery(cred); note != "" {
+	if note, n := s.drawLottery(cred); note != "" {
 		notes = append(notes, note)
+		credits += n
 	}
 	// 盲盒 / 补签卡 / 礼包补偿（对齐 WorkBuddy-Daily 互动玩法；幂等，正常态静默）
 	if bb, err := s.up.BlindBoxRound(cred); err == nil && bb != nil && bb.Opened > 0 {
@@ -975,19 +990,22 @@ func (s *Scheduler) claimGrowthRewards(cred *UpstreamCred) string {
 	if note, _ := s.up.UseMakeupCardIfMissed(cred); note != "" {
 		notes = append(notes, note)
 	}
-	if note := s.up.ClaimGiftAndCompensation(cred); note != "" {
+	if note, n := s.up.ClaimGiftAndCompensation(cred); note != "" {
 		notes = append(notes, note)
+		credits += n
 	}
-	return strings.Join(notes, "；")
+	return strings.Join(notes, "；"), credits
 }
 
 // drawLottery 抽完当前可用抽奖次数（先查 chances，逐次 draw；无次数/未开启为正常态）。
-func (s *Scheduler) drawLottery(cred *UpstreamCred) string {
+// 第二个返回值是抽到的积分合计（非积分类奖品不计）。
+func (s *Scheduler) drawLottery(cred *UpstreamCred) (string, int) {
 	chances, err := s.up.LotteryChances(cred)
 	if err != nil || chances <= 0 {
-		return ""
+		return "", 0
 	}
 	var prizes []string
+	credits := 0
 	for i := 0; i < chances && i < maxLotteryDraws; i++ {
 		res, err := s.up.LotteryDraw(cred)
 		if err != nil {
@@ -998,6 +1016,7 @@ func (s *Scheduler) drawLottery(cred *UpstreamCred) string {
 		}
 		if res.PrizeType == "credit" {
 			prizes = append(prizes, fmt.Sprintf("%s(+%d分)", res.PrizeName, res.CreditAmount))
+			credits += res.CreditAmount
 		} else if res.PrizeName != "" {
 			prizes = append(prizes, res.PrizeName)
 		} else {
@@ -1005,9 +1024,9 @@ func (s *Scheduler) drawLottery(cred *UpstreamCred) string {
 		}
 	}
 	if len(prizes) == 0 {
-		return ""
+		return "", 0
 	}
-	return fmt.Sprintf("抽奖 %d 次: %s", len(prizes), strings.Join(prizes, " "))
+	return fmt.Sprintf("抽奖 %d 次: %s", len(prizes), strings.Join(prizes, " ")), credits
 }
 
 func taskActionName(t string) string {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { createPortal } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
-  Ban, Check, ChevronLeft, ChevronRight, CircleCheck, Copy, Download, ExternalLink, FolderOpen, Globe, Hourglass, Loader2, MonitorSmartphone, Play,
+  Ban, Check, ChevronLeft, ChevronRight, CircleCheck, Coins, Copy, Download, ExternalLink, FolderOpen, Globe, Hourglass, Loader2, MonitorSmartphone, Play,
   RefreshCw, Search, Trash2, TriangleAlert, Upload, X,
 } from "lucide-react";
 import { accountsApi, clientSwitchApi } from "../services/api";
@@ -10,6 +10,7 @@ import { broadcastRefresh, errText, useAsync } from "../hooks/useAsync";
 import { EVENT, onEvent } from "../services/events";
 import { confirmDialog, promptDialog, toast } from "../components/common/Feedback";
 import { EmptyRow, ErrorBlock, SkeletonRows } from "../components/common/StateBlock";
+import CreditDetailDialog from "../components/common/CreditDetailDialog";
 import type { Account, AccountListResult, AccountQuery, AccountStatus, ClientSession, TaskRun, TaskRunDetail, TaskType } from "../types";
 import { useT, t } from "../i18n";
 
@@ -85,6 +86,8 @@ export default function Accounts() {
   const [expirySort, setExpirySort] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<Account | null>(null);
+  // 领取积分明细弹窗目标（null = 关闭）
+  const [earnFor, setEarnFor] = useState<{ uid: string; name: string } | null>(null);
   const [lastRun, setLastRun] = useState<TaskRun | null>(null);
   const [acctNames, setAcctNames] = useState<Record<string, string>>({});
   const [taskDetail, setTaskDetail] = useState<TaskRunDetail | null>(null);
@@ -96,7 +99,7 @@ export default function Accounts() {
   const [taskCenter, setTaskCenter] = useState(false);
   // 任务中心实时进度（对齐 panel 队列的逐项可见性）：task:progress 事件驱动
   const [prog, setProg] = useState<null | { type: string; index: number; total: number }>(null);
-  const [progRows, setProgRows] = useState<{ uid: string; status: string; message: string }[]>([]);
+  const [progRows, setProgRows] = useState<{ uid: string; status: string; message: string; credits: number }[]>([]);
   const [busyTypes, setBusyTypes] = useState<string[]>([]);
   // 接入账号弹窗：pick 选站点/地区 → waiting 出二维码等扫码 → success / error 终态
   const [oauth, setOauth] = useState<null | {
@@ -183,6 +186,10 @@ export default function Accounts() {
 
   const nameOf = (uid: string) => acctNames[uid] || t("账号 {uid}", { uid: uid.slice(0, 8) });
 
+  // 领取积分明细弹窗的账号：三处入口（任务结果行 / 表格操作列 / 账号详情）都走这里，
+  // 保证打开的是同一个弹窗、同一套口径
+  const openEarn = (uid: string, name?: string) => setEarnFor({ uid, name: name || nameOf(uid) });
+
   const rows = list.data?.items ?? [];
   const total = list.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -249,14 +256,15 @@ export default function Accounts() {
   // 后台任务逐账号进度：实时更新任务中心的进度视图
   useEffect(() => {
     const off = onEvent(EVENT.taskProgress, (p) => {
-      const d = (p ?? {}) as { type?: string; index?: number; total?: number; uid?: string; status?: string; message?: string };
+      const d = (p ?? {}) as { type?: string; index?: number; total?: number; uid?: string; status?: string; message?: string; credits?: number };
       if (typeof d.type !== "string" || typeof d.uid !== "string") return;
+      const row = { uid: d.uid, status: d.status ?? "", message: d.message ?? "", credits: d.credits ?? 0 };
       // 新任务开始（含一键全部执行的队列接续）：清空上一任务的逐账号进度
       if (progTypeRef.current !== d.type) {
         progTypeRef.current = d.type;
-        setProgRows([{ uid: d.uid, status: d.status ?? "", message: d.message ?? "" }]);
+        setProgRows([row]);
       } else {
-        setProgRows((rows) => [...rows.filter((r) => r.uid !== d.uid), { uid: d.uid!, status: d.status ?? "", message: d.message ?? "" }]);
+        setProgRows((rows) => [...rows.filter((r) => r.uid !== d.uid), row]);
       }
       setProg({ type: d.type, index: d.index ?? 0, total: d.total ?? 0 });
       // 逐账号终态（后端此时已完成该账号的状态/积分落盘）：防抖刷新账号列表，
@@ -279,14 +287,16 @@ export default function Accounts() {
   // 后台任务完成：拉取完整运行记录（含逐账号明细）回填结果卡片，并刷新列表
   useEffect(() => {
     const off = onEvent(EVENT.taskCompleted, (p) => {
-      const { type, success, failed, skipped } = (p ?? {}) as {
-        type?: string; success?: number; failed?: number; skipped?: number;
+      const { type, success, failed, skipped, credits } = (p ?? {}) as {
+        type?: string; success?: number; failed?: number; skipped?: number; credits?: number;
       };
       if (typeof type !== "string") return;
       setProg(null);
       progTypeRef.current = null; // 同类型任务再跑一轮时，首个 progress 事件会重置进度区
       const label = t(TASK_LABEL[type] ?? type);
-      const summary = `${t("成功")} ${success ?? 0} · ${t("失败")} ${failed ?? 0} · ${t("跳过")} ${skipped ?? 0}`;
+      let summary = `${t("成功")} ${success ?? 0} · ${t("失败")} ${failed ?? 0} · ${t("跳过")} ${skipped ?? 0}`;
+      // 领取积分只在真的领到时追加（0 分不写，避免「领取 0 分」这种噪音）
+      if ((credits ?? 0) > 0) summary += ` · ${t("领取 {n} 分", { n: (credits ?? 0).toLocaleString() })}`;
       if ((success ?? 0) > 0) {
         toast.success(t("{label}完成：{summary}", { label, summary }));
         markTaskDone(type); // 行内立即显示「已完成」，不等 taskStatus 往返
@@ -819,6 +829,15 @@ export default function Accounts() {
               <span className={`badge ${lastRun.failed > 0 ? "b-red" : lastRun.success > 0 ? "b-green" : "b-amber"}`}>
                 <span className="d" />{t("成功")} {lastRun.success} · {t("失败")} {lastRun.failed} · {t("跳过")} {lastRun.skipped}
               </span>
+              {/* 本轮领取到的积分合计：只统计上游明确返回数值的动作，未返回数值的不写 0 充数 */}
+              {lastRun.credits > 0 && (
+                <span
+                  className="badge b-green"
+                  data-tip={t("本轮各账号领取到的积分合计（仅统计上游明确返回数值的动作，明细见日志页「积分明细」）")}
+                >
+                  <span className="d" />{t("领取 {n} 分", { n: lastRun.credits.toLocaleString() })}
+                </span>
+              )}
               <button className="icon-btn" data-tip={t("关闭结果卡片")} onClick={() => setLastRun(null)}>
                 <X size={14} strokeWidth={2.2} />
               </button>
@@ -850,6 +869,19 @@ export default function Accounts() {
                   <span className="d" />{d.status === "success" ? t("成功") : d.status === "failed" ? t("失败") : t("跳过")}
                 </span>
                 <span className="td-msg">{d.message}</span>
+                {/* 该账号本轮实际领到的积分：点开看它自己的历史领取明细（不限本轮） */}
+                {d.credits > 0 && (
+                  <button
+                    className="td-earn"
+                    data-tip={t("本轮领取 {n} 分，点击查看该账号的领取明细", { n: d.credits.toLocaleString() })}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openEarn(d.uid);
+                    }}
+                  >
+                    +{d.credits.toLocaleString()} {t("分")}
+                  </button>
+                )}
                 {d.status === "failed" && <span className="td-more">{t("详情")} ›</span>}
               </div>
             ))}
@@ -908,7 +940,7 @@ export default function Accounts() {
                 </span>
               </th>
               <th>{t("账号")}</th><th>{t("区域")}</th><th>{t("状态")}</th><th>{t("积分余额")}</th>
-              <th>{t("Token 有效期")}</th><th>{t("最近签到")}</th><th>{t("最近活动")}</th><th style={{ width: 158 }}>{t("操作")}</th>
+              <th>{t("Token 有效期")}</th><th>{t("最近签到")}</th><th>{t("最近活动")}</th><th style={{ width: 208 }}>{t("操作")}</th>
             </tr>
           </thead>
           <tbody>
@@ -973,6 +1005,9 @@ export default function Accounts() {
                       </button>
                       <button className="icon-btn" data-tip={t("刷新详情")} onClick={() => void refreshDetail(a.uid)}>
                         <RefreshCw size={14} strokeWidth={2} />
+                      </button>
+                      <button className="icon-btn" data-tip={t("领取积分明细")} onClick={() => openEarn(a.uid, a.nickname || a.uid)}>
+                        <Coins size={14} strokeWidth={2} />
                       </button>
                       <button
                         className="icon-btn"
@@ -1066,6 +1101,13 @@ export default function Accounts() {
                     />
                   </>
                 )}
+                {/* 余额是「现在有多少」，这里是「怎么来的」——两回事，故紧跟积分块给入口 */}
+                <button className="cd-entry" onClick={() => openEarn(detail.uid, detail.nickname || detail.uid)}>
+                  <Coins size={13} strokeWidth={2.2} />
+                  <span>{t("查看领取积分明细")}</span>
+                  <span className="cd-entry-hint">{t("今日 / 近 7 天 / 按任务 / 逐条")}</span>
+                  <ChevronRight size={13} strokeWidth={2.2} className="cd-entry-go" />
+                </button>
                 <KV k="最近活动" v={detail.lastActivity || "—"} />
                 <KV k="在途请求" v={String(detail.inflight)} />
               </div>
@@ -1093,6 +1135,12 @@ export default function Accounts() {
           </div>
         </div>,
       document.body)}
+
+      {/* 渲染在账号详情之后：两者可同时打开（从详情点进来后能退回详情），
+          同 z-index 时 DOM 靠后的那个叠在上面 */}
+      {earnFor && (
+        <CreditDetailDialog uid={earnFor.uid} name={earnFor.name} onClose={() => setEarnFor(null)} />
+      )}
 
       {taskDetail && createPortal(
         <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && setTaskDetail(null)}>
@@ -1178,7 +1226,7 @@ export default function Accounts() {
                         onClick={() => {
                           if (r.status !== "failed") return;
                           setTaskDetailType(prog?.type ?? "");
-                          setTaskDetail({ uid: r.uid, status: r.status, message: r.message });
+                          setTaskDetail({ uid: r.uid, status: r.status, message: r.message, credits: r.credits });
                         }}
                       >
                         <button

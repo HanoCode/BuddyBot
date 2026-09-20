@@ -168,6 +168,7 @@ type Config struct {
 	KeepAwake     bool           `json:"keep_awake"`
 	Inject        InjectConfig   `json:"inject"`
 	SkillHub      SkillHubConfig `json:"skillhub"`
+	Plugins       PluginsConfig  `json:"plugins"`
 }
 
 // SkillHubConfig SkillHub 技能市场配置
@@ -274,6 +275,7 @@ func DefaultConfig() *Config {
 		Redis:         RedisConfig{Enabled: false},
 		Inject:        InjectConfig{Port: 9223, DNDAutoConfirm: true, Theme: ThemeConfig{Mask: 30, TextShadow: true}},
 		SkillHub:      SkillHubConfig{CacheTTLMinutes: DefaultSkillHubCacheTTLMinutes},
+		Plugins:       PluginsConfig{RulesText: DefaultRulesText(), SafetyAllowlist: DefaultSafetyAllowlist()},
 	}
 }
 
@@ -610,6 +612,13 @@ func (s *Service) LoadConfig() error {
 	// 存量配置无 skillhub 字段（零值/负值）时回落默认 3 天
 	if cfg.SkillHub.CacheTTLMinutes <= 0 {
 		cfg.SkillHub.CacheTTLMinutes = DefaultSkillHubCacheTTLMinutes
+	}
+	// 插件中心：存量配置缺 plugins 键时不必补默认——Unmarshal 对结构体是「合并」语义，
+	// 缺键会保留 DefaultConfig 的默认值；而用户显式清空（rules_text: "" / safety_allowlist: []）
+	// 必须原样生效，所以这里不做 len == 0 回落（否则用户删不掉）。
+	// 仅 safety_allowlist 为 JSON null（视同「从未设置」）时补默认。
+	if cfg.Plugins.SafetyAllowlist == nil {
+		cfg.Plugins.SafetyAllowlist = DefaultSafetyAllowlist()
 	}
 	s.normalizePaths(cfg)
 	s.mu.Lock()

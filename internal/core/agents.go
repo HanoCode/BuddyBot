@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -688,9 +689,11 @@ func RestoreAgentBackup(target, backupID, backupRoot string) (int, error) {
 func writeAgentJSON(path string, mutate func(root map[string]any)) error {
 	root := map[string]any{}
 	if text := readAgentFile(path); strings.TrimSpace(text) != "" {
-		if err := json.Unmarshal([]byte(text), &root); err != nil {
+		parsed, err := decodeJSONObject(text)
+		if err != nil {
 			return fmt.Errorf("现有配置不是合法 JSON（请先修复或手动备份）: %w", err)
 		}
+		root = parsed
 	}
 	mutate(root)
 	out, err := json.MarshalIndent(root, "", "  ")
@@ -698,6 +701,19 @@ func writeAgentJSON(path string, mutate func(root map[string]any)) error {
 		return err
 	}
 	return atomicWriteFile(path, string(out)+"\n")
+}
+
+// decodeJSONObject 解析 JSON 对象。UseNumber 让数字以原文形式保留——
+// 客户端的配置文件里可能有纳秒时间戳/高精度小数，若经 float64 中转再写回会被静默改写
+// （如 1758346795123456789 → 1758346795123456800）。
+func decodeJSONObject(text string) (map[string]any, error) {
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	root := map[string]any{}
+	if err := dec.Decode(&root); err != nil {
+		return nil, err
+	}
+	return root, nil
 }
 
 func readAgentFile(path string) string {
@@ -710,12 +726,19 @@ func readAgentFile(path string) string {
 
 // atomicWriteFile 原子写：临时文件 + rename
 func atomicWriteFile(path, content string) error {
-	if parent := filepath.Dir(path); parent != "" {
+	parent := filepath.Dir(path)
+	if parent != "" {
 		if err := os.MkdirAll(parent, 0o755); err != nil {
 			return err
 		}
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".wb-agent-*")
+	// 保留目标文件原有权限：重写用户配置不该悄悄改权限（如 644 → 600）。
+	// 新建文件默认 0600——这些文件里可能有凭据。
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	tmp, err := os.CreateTemp(parent, ".wb-agent-*")
 	if err != nil {
 		return err
 	}
@@ -729,7 +752,7 @@ func atomicWriteFile(path, content string) error {
 		os.Remove(tmpName)
 		return err
 	}
-	if err := os.Chmod(tmpName, 0o600); err != nil {
+	if err := os.Chmod(tmpName, mode); err != nil {
 		os.Remove(tmpName)
 		return err
 	}
@@ -772,12 +795,24 @@ func setTOMLTopLevel(text, key, value string) string {
 	return out + key + " = " + value + "\n"
 }
 
+// tomlHeaderRe 识别 TOML 表头行：支持 [a.b] / [models."m1"] / [[a.b]]，允许尾随注释。
+// 用正则而不是「以 [ 开头」判断，避免把多行数组里的 [1, 2] 这类行误当成表头。
+var tomlHeaderRe = regexp.MustCompile(`^(\[\[?[A-Za-z0-9_.\-"]+\]\]?)\s*(#.*)?$`)
+
+// tomlHeaderOf 取该行的表头文本（非表头返回 ""）；行尾注释不影响比较
+func tomlHeaderOf(line string) string {
+	if m := tomlHeaderRe.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // replaceTOMLTable 替换 [table] 整节（从表头到下一个表头/EOF）；不存在则追加
 func replaceTOMLTable(text, header, body string) string {
 	lines := strings.Split(text, "\n")
 	start := -1
 	for i, line := range lines {
-		if strings.TrimSpace(line) == header {
+		if tomlHeaderOf(line) == header {
 			start = i
 			break
 		}
@@ -791,7 +826,7 @@ func replaceTOMLTable(text, header, body string) string {
 	}
 	end := len(lines)
 	for i := start + 1; i < len(lines); i++ {
-		if strings.HasPrefix(strings.TrimSpace(lines[i]), "[") {
+		if tomlHeaderOf(lines[i]) != "" {
 			end = i
 			break
 		}

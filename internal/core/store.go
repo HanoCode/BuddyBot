@@ -104,6 +104,13 @@ type TaskLog struct {
 	Status   string  `json:"status"` // success / failed / skipped
 	Message  string  `json:"message"`
 	Duration float64 `json:"duration"` // 耗时 ms
+
+	// Credits 本次该账号领取到的积分合计（仅统计上游明确返回积分数量的动作：
+	// 成长任务 reward_credit / 连登档位 credit / 抽奖 credit 奖品 / 礼包补偿 credit）。
+	// 这是「动作级领取记录」，与 CreditLog 的「余额观测差值」口径不同：
+	// 上游报成功但实际未到账、或未返回数值的动作（签到本金、盲盒物品、trial 加油包）
+	// 都不计入这里。两者对不上时应以 CreditLog 为准，不要互相覆盖。
+	Credits int `json:"credits"`
 }
 
 // CreditLog 积分变动流水（真实余额查询之间的差值，非估算）。

@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useLocation } from "react-router-dom";
 import { ChevronLeft, ChevronRight, Download, Eraser, FolderOpen, Loader2, RefreshCw, Search, X } from "lucide-react";
 import { logsApi } from "../services/api";
 import { broadcastRefresh, errText, useAsync } from "../hooks/useAsync";
 import { EVENT, onEvent } from "../services/events";
 import { confirmDialog, toast } from "../components/common/Feedback";
 import { EmptyRow, ErrorBlock, SkeletonRows } from "../components/common/StateBlock";
-import type { AuditLogPage, CreditLogPage, LogQuery, RequestLog, RequestLogPage, TaskLogPage } from "../types";
+// 汇总卡 / 类型标签 / 口径文案与账号管理弹窗共用同一份定义，杜绝两处口径漂移
+import { CREDIT_TASK_TYPES as TASK_TYPES, CREDIT_TYPE_LABEL as TASK_TYPE_LABEL, CreditOriginNote, CreditSummaryCards, CreditTypeChips } from "../components/common/creditDetail";
+import type { AuditLogPage, CreditDetail, CreditLogPage, LogQuery, RequestLog, RequestLogPage, TaskLogPage } from "../types";
 import { useT } from "../i18n";
 
 const STATUS_OPTIONS = [
@@ -16,17 +19,6 @@ const STATUS_OPTIONS = [
   { label: "403 拒绝", value: 403 },
   { label: "429 限流", value: 429 },
   { label: "5xx 异常", value: 500 },
-];
-
-const TASK_TYPES = [
-  { label: "全部类型", value: "" },
-  { label: "签到", value: "checkin" },
-  { label: "旅行", value: "travel" },
-  { label: "保活", value: "keepalive" },
-  { label: "活跃地图", value: "activity" },
-  { label: "开学季", value: "school" },
-  { label: "夜猫子", value: "cat" },
-  { label: "成长任务", value: "growth" },
 ];
 
 const AUDIT_ACTIONS = [
@@ -61,8 +53,13 @@ function statusBadge(status: number) {
 }
 
 export default function Logs() {
-  const [tab, setTab] = useState<"req" | "task" | "credit" | "audit">("req");
-  const [keyword, setKeyword] = useState("");
+  const location = useLocation();
+  // 账号管理弹窗的「在日志页查看全部」会带 { tab: "earn", uid } 过来：
+  // 落到「积分明细」页签，并把该账号填进关键字框（可编辑，用户能自己改掉）。
+  // 页面按路由 pathname 挂载，所以这里直接当初始值用，不需要额外同步。
+  const pre = (location.state ?? null) as { tab?: "earn"; uid?: string } | null;
+  const [tab, setTab] = useState<"req" | "task" | "earn" | "credit" | "audit">(pre?.tab ?? "req");
+  const [keyword, setKeyword] = useState(pre?.uid ?? "");
   const [status, setStatus] = useState(0);
   const [taskType, setTaskType] = useState("");
   const [taskStatus, setTaskStatus] = useState(0);
@@ -80,20 +77,21 @@ export default function Logs() {
     keyword: keyword.trim(),
     status: tab === "req" ? (status === 500 ? 0 : status) : taskStatus,
     statusIn: tab === "req" && status === 500 ? [500, 501, 502, 503, 504] : undefined,
-    type: tab === "task" ? taskType : tab === "audit" ? auditType : "",
+    type: tab === "task" || tab === "earn" ? taskType : tab === "audit" ? auditType : "",
     page,
     pageSize: PAGE_SIZE,
   };
 
   const reqs = useAsync<RequestLogPage>(() => logsApi.requestLogs(query), [tab, keyword, status, rangeHours, page]);
   const tasks = useAsync<TaskLogPage>(() => logsApi.taskLogs(query), [tab, keyword, taskType, taskStatus, rangeHours, page]);
+  const earns = useAsync<CreditDetail>(() => logsApi.creditDetail(query), [tab, keyword, taskType, rangeHours, page]);
   const credits = useAsync<CreditLogPage>(() => logsApi.creditLogs(query), [tab, keyword, rangeHours, page]);
   const audits = useAsync<AuditLogPage>(() => logsApi.auditLogs(query), [tab, keyword, auditType, rangeHours, page]);
 
   const load = useCallback(async () => {
-    await Promise.all([reqs.reload(), tasks.reload(), credits.reload(), audits.reload()]);
+    await Promise.all([reqs.reload(), tasks.reload(), earns.reload(), credits.reload(), audits.reload()]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reqs.reload, tasks.reload, credits.reload, audits.reload]);
+  }, [reqs.reload, tasks.reload, earns.reload, credits.reload, audits.reload]);
 
   useEffect(() => {
     const onRefresh = () => void load();
@@ -151,10 +149,11 @@ export default function Logs() {
     }
   };
 
-  const active = tab === "req" ? reqs : tab === "task" ? tasks : tab === "credit" ? credits : audits;
+  const active = tab === "req" ? reqs : tab === "task" ? tasks : tab === "earn" ? earns : tab === "credit" ? credits : audits;
   const total =
     tab === "req" ? (reqs.data?.total ?? 0)
     : tab === "task" ? (tasks.data?.total ?? 0)
+    : tab === "earn" ? (earns.data?.itemHits ?? 0)
     : tab === "credit" ? (credits.data?.total ?? 0)
     : (audits.data?.total ?? 0);
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -194,6 +193,7 @@ export default function Logs() {
         <div className="seg">
           <button className={tab === "req" ? "on" : ""} onClick={() => setTab("req")}>{t("请求日志")}</button>
           <button className={tab === "task" ? "on" : ""} onClick={() => setTab("task")}>{t("任务日志")}</button>
+          <button className={tab === "earn" ? "on" : ""} onClick={() => setTab("earn")}>{t("积分明细")}</button>
           <button className={tab === "credit" ? "on" : ""} onClick={() => setTab("credit")}>{t("积分流水")}</button>
           <button className={tab === "audit" ? "on" : ""} onClick={() => setTab("audit")}>{t("审计日志")}</button>
         </div>
@@ -204,6 +204,7 @@ export default function Logs() {
             placeholder={
               tab === "req" ? t("关键字 / 密钥 / IP / 模型 / 会话")
               : tab === "task" ? t("关键字 / 账号 / 消息")
+              : tab === "earn" ? t("关键字 / 账号 / 领取说明")
               : tab === "credit" ? t("关键字 / 账号 / 备注")
               : t("关键字 / 操作 / 对象")
             }
@@ -226,7 +227,7 @@ export default function Logs() {
               </button>
             ))}
           </div>
-        ) : tab === "task" ? (
+        ) : tab === "task" || tab === "earn" ? (
           <>
             <div className="seg">
               {TASK_TYPES.map((o) => (
@@ -235,13 +236,16 @@ export default function Logs() {
                 </button>
               ))}
             </div>
-            <div className="seg">
-              {TASK_STATUS.map((o) => (
-                <button key={o.value} className={taskStatus === o.value ? "on" : ""} onClick={() => setTaskStatus(o.value)}>
-                  {t(o.label)}
-                </button>
-              ))}
-            </div>
+            {/* 积分明细只统计领取成功的动作，状态过滤对它没有意义，不摆无用控件 */}
+            {tab === "task" && (
+              <div className="seg">
+                {TASK_STATUS.map((o) => (
+                  <button key={o.value} className={taskStatus === o.value ? "on" : ""} onClick={() => setTaskStatus(o.value)}>
+                    {t(o.label)}
+                  </button>
+                ))}
+              </div>
+            )}
           </>
         ) : tab === "audit" ? (
           <div className="seg">
@@ -338,15 +342,49 @@ export default function Logs() {
               ))}
             </tbody>
           </table>
+        ) : tab === "earn" ? (
+          <div>
+            {/* 今日 / 近 7 天跟随下方「账号 / 类型 / 关键字」筛选收窄，但不随时间范围变化 */}
+            <CreditSummaryCards data={earns.data} rangeLabel="筛选范围内合计" />
+            <CreditTypeChips groups={earns.data?.byTask} />
+
+            {/* 口径必须写在数字前面：说明只统计上游给了数值的动作，并点明有多少条没给 */}
+            <CreditOriginNote noAmount={earns.data?.noAmount ?? 0} />
+
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>{t("时间")}</th><th>{t("任务")}</th><th>{t("触发")}</th>
+                  <th>{t("账号")}</th><th>{t("领取积分")}</th><th>{t("领取说明")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!earns.settled && <SkeletonRows colSpan={6} rows={5} />}
+                {earns.settled && (earns.data?.items?.length ?? 0) === 0 && (
+                  <EmptyRow colSpan={6} text={t("没有领取到积分的记录（签到 / 成长任务 / 连登 / 抽奖等领取动作会记在这里）")} />
+                )}
+                {(earns.data?.items ?? []).map((l) => (
+                  <tr key={l.id}>
+                    <td className="mono">{l.time}</td>
+                    <td><span className="chip">{t(TASK_TYPE_LABEL[l.type] ?? l.type)}</span></td>
+                    <td>{l.trigger === "manual" ? t("手动") : t("排程")}</td>
+                    <td className="mono">{l.uid}</td>
+                    <td className="num earn-amount">+{l.credits.toLocaleString()}</td>
+                    <td>{l.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <table className="tbl">
             <thead>
-              <tr><th>{t("时间")}</th><th>{t("类型")}</th><th>{t("触发")}</th><th>{t("账号")}</th><th>{t("状态")}</th><th>{t("消息")}</th><th>{t("耗时")}</th></tr>
+              <tr><th>{t("时间")}</th><th>{t("类型")}</th><th>{t("触发")}</th><th>{t("账号")}</th><th>{t("状态")}</th><th>{t("领取积分")}</th><th>{t("消息")}</th><th>{t("耗时")}</th></tr>
             </thead>
             <tbody>
-              {!tasks.settled && <SkeletonRows colSpan={7} rows={5} />}
+              {!tasks.settled && <SkeletonRows colSpan={8} rows={5} />}
               {tasks.settled && (tasks.data?.items?.length ?? 0) === 0 && (
-                <EmptyRow colSpan={7} text={t("没有匹配的任务日志")} />
+                <EmptyRow colSpan={8} text={t("没有匹配的任务日志")} />
               )}
               {(tasks.data?.items ?? []).map((l) => (
                 <tr key={l.id}>
@@ -360,6 +398,7 @@ export default function Logs() {
                       {l.status === "success" ? t("成功") : l.status === "failed" ? t("失败") : t("跳过")}
                     </span>
                   </td>
+                  <td className="num earn-amount">{l.credits > 0 ? `+${l.credits.toLocaleString()}` : "—"}</td>
                   <td>{l.message}</td>
                   <td className="num">{l.duration.toFixed(0)} ms</td>
                 </tr>

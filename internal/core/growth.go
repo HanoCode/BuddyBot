@@ -281,10 +281,14 @@ func (s *Scheduler) doActivity(a Account, cred *UpstreamCred) TaskRunDetail {
 		return TaskRunDetail{UID: a.UID, Status: TaskFailed, Message: "活跃事件上报失败: " + err.Error()}
 	}
 	msg := fmt.Sprintf("已上报 %d 条活跃事件", activityReportCount)
-	if note := s.claimGrowthRewards(cred); note != "" {
+	note, credits := s.claimGrowthRewards(cred)
+	if note != "" {
 		msg += "；" + note
 	}
-	return TaskRunDetail{UID: a.UID, Status: TaskSuccess, Message: msg}
+	if credits > 0 {
+		msg += fmt.Sprintf("（本次领取 %d 分）", credits)
+	}
+	return TaskRunDetail{UID: a.UID, Status: TaskSuccess, Message: msg, Credits: credits}
 }
 
 // doSchool 开学季活动（仅 CN）：查任务 → 补浏览/分享 → 领奖 → 有抽奖机会则抽。
@@ -508,6 +512,7 @@ func (s *Scheduler) growthForAccount(a Account) TaskRunDetail {
 	// 2) 逐任务处理
 	accepted := len(accept)
 	claimed, lit := 0, 0
+	earned := 0 // 本次领取到的积分合计（每个成功领奖按 reward_credit 累加）
 	var notes []string
 	for _, t := range tasks {
 		spec, ok := growthTaskSpecs[t.TaskCode]
@@ -530,7 +535,8 @@ func (s *Scheduler) growthForAccount(a Account) TaskRunDetail {
 		if t.Claimable() {
 			if err := s.up.GrowthTaskClaim(cred, t.TaskCode); err == nil {
 				claimed++
-				notes = append(notes, spec.name+" 领奖成功")
+				earned += t.RewardCredit
+				notes = append(notes, fmt.Sprintf("%s 领奖成功(+%d分)", spec.name, t.RewardCredit))
 			} else {
 				notes = append(notes, spec.name+" 领奖失败: "+err.Error())
 			}
@@ -595,7 +601,8 @@ func (s *Scheduler) growthForAccount(a Account) TaskRunDetail {
 		}
 		if err := s.up.GrowthTaskClaim(cred, t.TaskCode); err == nil {
 			claimed++
-			notes = append(notes, spec.name+" 点亮并领奖成功")
+			earned += t.RewardCredit
+			notes = append(notes, fmt.Sprintf("%s 点亮并领奖成功(+%d分)", spec.name, t.RewardCredit))
 		} else {
 			notes = append(notes, spec.name+" 进度已达成但领奖失败: "+err.Error())
 		}
@@ -603,11 +610,14 @@ func (s *Scheduler) growthForAccount(a Account) TaskRunDetail {
 	}
 
 	msg := fmt.Sprintf("接受 %d 个任务，点亮 %d 个，领取 %d 个奖励", accepted, lit, claimed)
+	if earned > 0 {
+		msg += fmt.Sprintf("，共领取 %d 分", earned)
+	}
 	if len(notes) > 0 {
 		msg += "；" + strings.Join(notes, "；")
 	}
 	if accepted == 0 && lit == 0 && claimed == 0 && len(notes) == 0 {
 		return TaskRunDetail{UID: a.UID, Status: TaskSkipped, Message: "成长任务无可推进项"}
 	}
-	return TaskRunDetail{UID: a.UID, Status: TaskSuccess, Message: msg}
+	return TaskRunDetail{UID: a.UID, Status: TaskSuccess, Message: msg, Credits: earned}
 }

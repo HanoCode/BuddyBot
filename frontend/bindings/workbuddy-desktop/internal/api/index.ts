@@ -12,6 +12,7 @@ import * as InjectAPI from "./injectapi.js";
 import * as KeysAPI from "./keysapi.js";
 import * as LogsAPI from "./logsapi.js";
 import * as ModelsAPI from "./modelsapi.js";
+import * as PluginsAPI from "./pluginsapi.js";
 import * as PowerAPI from "./powerapi.js";
 import * as SkillsAPI from "./skillsapi.js";
 import * as StatsAPI from "./statsapi.js";
@@ -28,6 +29,7 @@ export {
     KeysAPI,
     LogsAPI,
     ModelsAPI,
+    PluginsAPI,
     PowerAPI,
     SkillsAPI,
     StatsAPI,
@@ -47,6 +49,9 @@ export type {
     ConfigMeta,
     CreateKeyParams,
     CreateKeyResult,
+    CreditDetail,
+    CreditDetailDay,
+    CreditDetailTask,
     CreditLogPage,
     GatewayConfig,
     GatewayStatus,
@@ -58,6 +63,7 @@ export type {
     ModelUsage,
     OAuthHint,
     OAuthPollResult,
+    PluginParams,
     RequestLog,
     RequestLogPage,
     SkillInstallParams,

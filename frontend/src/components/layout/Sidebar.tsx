@@ -10,6 +10,7 @@ import {
   AppWindow,
   Bot,
   Puzzle,
+  Package,
   Server,
   Sparkles,
   Download,
@@ -84,6 +85,7 @@ export default function Sidebar() {
       items: [
         { to: "/chat", label: t("聊天测试"), icon: <MessageSquare size={17} strokeWidth={1.9} /> },
         { to: "/agents", label: t("智能体接入"), icon: <Bot size={17} strokeWidth={1.9} /> },
+        { to: "/plugins", label: t("插件中心"), icon: <Package size={17} strokeWidth={1.9} /> },
         { to: "/skills", label: t("技能市场"), icon: <Puzzle size={17} strokeWidth={1.9} /> },
         { to: "/prompts", label: t("提效指令库"), icon: <Sparkles size={17} strokeWidth={1.9} /> },
         { to: "/logs", label: t("日志查看"), icon: <ScrollText size={17} strokeWidth={1.9} /> },
@@ -112,26 +114,29 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {NAV_SECTIONS.map((sec) => (
-        <div className="nav-section" key={sec.title}>
-          <div className="nav-label">
-            <span>{sec.title}</span>
+      {/* 菜单区可滚动：菜单变多或窗口过矮时只滚这一块，品牌区与底部卡片保持固定 */}
+      <nav className="nav-scroll">
+        {NAV_SECTIONS.map((sec) => (
+          <div className="nav-section" key={sec.title}>
+            <div className="nav-label">
+              <span>{sec.title}</span>
+            </div>
+            {sec.items.map((item) => (
+              <a
+                key={item.to}
+                href={`#${item.to}`}
+                data-tip={item.label}
+                data-tip-pos="right"
+                className={`nav-item${pathname === item.to ? " active" : ""}`}
+              >
+                {item.icon}
+                <span>{item.label}</span>
+                {item.badge && <div className="nav-badge">{item.badge}</div>}
+              </a>
+            ))}
           </div>
-          {sec.items.map((item) => (
-            <a
-              key={item.to}
-              href={`#${item.to}`}
-              data-tip={item.label}
-              data-tip-pos="right"
-              className={`nav-item${pathname === item.to ? " active" : ""}`}
-            >
-              {item.icon}
-              <span>{item.label}</span>
-              {item.badge && <div className="nav-badge">{item.badge}</div>}
-            </a>
-          ))}
-        </div>
-      ))}
+        ))}
+      </nav>
 
       <div className="side-foot">
         <button

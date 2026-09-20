@@ -70,6 +70,7 @@ type TaskStat struct {
 	Success int    `json:"success"`
 	Failed  int    `json:"failed"`
 	Skipped int    `json:"skipped"`
+	Credits int    `json:"credits"` // 该任务类型累计领取积分（上游明确返回数值的动作口径）
 }
 
 // Overview 总览指标
@@ -656,6 +657,7 @@ func taskStats(tasks []TaskLog, r Range) []TaskStat {
 			m[t.Type] = s
 		}
 		s.Total++
+		s.Credits += t.Credits
 		switch t.Status {
 		case "success":
 			s.Success++

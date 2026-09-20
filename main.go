@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"log"
+	"os"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -12,6 +13,7 @@ import (
 	"workbuddy-desktop/internal/api"
 	"workbuddy-desktop/internal/core"
 	"workbuddy-desktop/internal/inject"
+	"workbuddy-desktop/internal/mcp"
 )
 
 //go:embed all:frontend/dist
@@ -21,6 +23,33 @@ var assets embed.FS
 var promptsJSON []byte
 
 func main() {
+	// 随包内嵌数据注入 core（go:embed 不能跨目录，故由 main 传入）
+	core.SetEmbeddedPrompts(promptsJSON)
+
+	// 无界面子命令：由插件中心写入的脚本 / 客户端配置回调。
+	// 这些分支不启动 GUI / 网关 / 单实例锁，stdin/stdout 即协议通道。
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "mcp":
+			// MCP stdio server：供编程智能体作为工具接入
+			if err := mcp.Run(core.NewService()); err != nil {
+				log.Fatal(err)
+			}
+			return
+		case "hook-guard", "hook-context", "hook-notify":
+			svc := core.NewService()
+			switch os.Args[1] {
+			case "hook-guard":
+				core.RunHookGuard(svc, os.Stdin)
+			case "hook-context":
+				core.RunHookContext(svc, os.Stdin)
+			default:
+				core.RunHookNotify(svc, os.Stdin)
+			}
+			return
+		}
+	}
+
 	// 单实例保护：关窗口默认隐藏到托盘，旧实例仍在运行；重复启动会造成
 	// 网关端口 7863 冲突（bind WSAEADDRINUSE）。第二个实例弹提示后直接退出。
 	if !core.AcquireSingleInstance() {
@@ -41,6 +70,7 @@ func main() {
 		application.NewService(api.NewClientSwitchAPI(coreService)),
 		application.NewService(api.NewDataMigrateAPI()),
 		application.NewService(api.NewAgentsAPI(coreService)),
+		application.NewService(api.NewPluginsAPI(coreService)),
 		application.NewService(api.NewConfigAPI(coreService)),
 		application.NewService(api.NewGatewayAPI(coreService)),
 		application.NewService(api.NewKeysAPI(coreService)),

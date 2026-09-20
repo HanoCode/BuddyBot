@@ -38,6 +38,13 @@ func (s *StatsAPI) OfficialUsage(ctx context.Context, days int, force bool) (*co
 	return s.service.OfficialUsage(days, force)
 }
 
+// ClientTokenStats WorkBuddy 客户端自身 token 消耗：扫描本机会话日志（JSONL）
+// 聚合真实 usage（输入/输出/缓存读写，带 5 分钟缓存；force=true 强制重扫）。
+// 目录缺失的档位（国内/国际版）如实标注 missing，不做任何兜底填充。
+func (s *StatsAPI) ClientTokenStats(ctx context.Context, days int, force bool) (*core.ClientTokenStats, error) {
+	return s.service.ClientTokenStats(days, force)
+}
+
 // SessionDrilldown 会话下钻：缓存命中率 KPI + 会话 Top 聚合（按 token 降序）。
 func (s *StatsAPI) SessionDrilldown(ctx context.Context, days int) (*core.SessionDrilldown, error) {
 	d := s.service.Stats().SessionDrilldown(days)

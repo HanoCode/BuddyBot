@@ -29,6 +29,15 @@ export function Checkin(uids: string[] | null): $CancellablePromise<core$0.TaskR
 }
 
 /**
+ * ClientSession 官方客户端当前登录账号探测（账号管理页提示条数据源）：
+ * 从官方登录位读当前登录 uid（明文），并在 client_auth_dirs 发现目录里找
+ * 同 uid 的可用明文凭证。只读磁盘，可安全频繁调用。
+ */
+export function ClientSession(): $CancellablePromise<core$0.ClientSession | null> {
+    return $Call.ByID(3770010829);
+}
+
+/**
  * Delete 删除账号：移除其凭证文件（auth_dir 是该账号的唯一真实来源）
  */
 export function Delete(uid: string): $CancellablePromise<void> {
@@ -56,6 +65,14 @@ export function ExportCredentials(password: string): $CancellablePromise<json$0.
  */
 export function FocusMainWindow(): $CancellablePromise<void> {
     return $Call.ByID(4020263129);
+}
+
+/**
+ * ImportClientSession 一键导入客户端当前登录账号：把发现的明文凭证复制进
+ * auth_dir（不移动原文件，官方登录位里的加密 token 不做也不需要解密）。
+ */
+export function ImportClientSession(): $CancellablePromise<$models.ImportResult | null> {
+    return $Call.ByID(3138577430);
 }
 
 /**

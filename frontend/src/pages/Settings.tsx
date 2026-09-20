@@ -614,6 +614,19 @@ function ScheduleSection({
   const sc = draft.schedule;
   const nextOf = (type: string) => sched.nextRuns?.find((n) => n.type === type);
   const [testingNotify, setTestingNotify] = useState(false);
+  const [archivingNow, setArchivingNow] = useState(false);
+
+  const archiveNow = async () => {
+    setArchivingNow(true);
+    try {
+      const n = await systemApi.sessionArchiveNow();
+      toast.success(t("会话归档完成"), t("本次共归档 {n} 个空闲会话", { n }));
+    } catch (e) {
+      toast.error(t("会话归档失败"), errText(e));
+    } finally {
+      setArchivingNow(false);
+    }
+  };
 
   const setHours = (
     key:
@@ -763,6 +776,44 @@ function ScheduleSection({
               onChange={(e) => setDraft({ ...draft, schedule: { ...sc, refresh: { ...(sc.refresh ?? { enabled: true, interval_minutes: 0 }), interval_minutes: Number(e.target.value) } } })}
             />
             <span className="muted" style={{ fontSize: 12 }}>{t("分钟（0 = 默认 30 分钟，合法范围 5-1440）")}</span>
+          </div>
+        </div>
+
+        <div className="set-vert" style={{ borderTop: "1px dashed var(--border)", paddingTop: 12 }}>
+          <div className="info">
+            <div className="t">{t("会话自动归档")}</div>
+            <div className="d">
+              {t("把 WorkBuddy 客户端中空闲超过阈值的已结束会话标记为「已归档」（不含进行中的会话与后台自动化会话）")}
+              {t("每 30 分钟巡检一次；归档与客户端内手动归档同一状态，可随时取消归档")}
+            </div>
+          </div>
+          <div className="flex" style={{ gap: 8, alignItems: "center" }}>
+            <Switch
+              on={sc.session_archive?.enabled ?? false}
+              onChange={() => setDraft({ ...draft, schedule: { ...sc, session_archive: { ...(sc.session_archive ?? { enabled: false, idle_days: 0 }), enabled: !(sc.session_archive?.enabled ?? false) } } })}
+            />
+            <span className="muted" style={{ fontSize: 12 }}>
+              {(sc.session_archive?.enabled ?? false) ? t("已开启") : t("已关闭")}
+            </span>
+            <input
+              className="mini-input"
+              style={{ width: 90 }}
+              type="number"
+              min={1}
+              max={365}
+              value={sc.session_archive?.idle_days ?? 0}
+              onChange={(e) => setDraft({ ...draft, schedule: { ...sc, session_archive: { ...(sc.session_archive ?? { enabled: false, idle_days: 0 }), idle_days: Number(e.target.value) } } })}
+            />
+            <span className="muted" style={{ fontSize: 12 }}>{t("天（0 = 默认 7 天，合法范围 1-365）")}</span>
+            <button
+              className="btn btn-ghost"
+              style={{ marginLeft: 8, display: "inline-flex", alignItems: "center", gap: 6 }}
+              disabled={archivingNow}
+              onClick={archiveNow}
+            >
+              {archivingNow ? <Loader2 size={13} className="spin" /> : <Archive size={13} />}
+              {t("立即归档")}
+            </button>
           </div>
         </div>
 

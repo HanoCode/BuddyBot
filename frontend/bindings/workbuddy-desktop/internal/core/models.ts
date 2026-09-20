@@ -106,6 +106,56 @@ export interface ChatMessage {
 }
 
 /**
+ * ClientSession 官方客户端当前登录账号探测结果
+ */
+export interface ClientSession {
+    /**
+     * 登录位存在且能读到 uid
+     */
+    "detected": boolean;
+
+    /**
+     * 当前登录账号 uid（明文）
+     */
+    "uid"?: string;
+
+    /**
+     * 昵称（登录位里加密，取自已发现的凭证文件）
+     */
+    "nickname"?: string;
+
+    /**
+     * cn / global（取自已发现的凭证文件）
+     */
+    "realm"?: string;
+
+    /**
+     * 官方登录位绝对路径
+     */
+    "authFile"?: string;
+
+    /**
+     * 发现的可用明文凭证绝对路径（空=未发现）
+     */
+    "credFile"?: string;
+
+    /**
+     * 凭证文件名（导入时的落盘名）
+     */
+    "credName"?: string;
+
+    /**
+     * 凭证 expiresAt（Unix 秒；0=未知）
+     */
+    "expiresAt"?: number;
+
+    /**
+     * 该 uid 已在账号池（auth_dir 已有凭证）
+     */
+    "inPool": boolean;
+}
+
+/**
  * ClientSwitchPrecheck 切换前检查结果（前端据此渲染确认信息）
  */
 export interface ClientSwitchPrecheck {
@@ -126,10 +176,143 @@ export interface ClientSwitchPrecheck {
     "warnings"?: string;
 }
 
+/**
+ * ClientTokenSource 单数据源（国内/国际版）扫描结果
+ */
+export interface ClientTokenSource {
+    "source": string;
+
+    /**
+     * 数据根不存在（未安装该版本客户端）
+     */
+    "missing": boolean;
+    "filesScanned": number;
+    "parseErrors": number;
+    "summary": ClientUsageSummary;
+}
+
+/**
+ * ClientTokenStats 客户端自身 token 消耗总报告
+ */
+export interface ClientTokenStats {
+    "generatedAt": number;
+    "days": number;
+
+    /**
+     * 两档位合计（不同账号体系，分源见 Sources）
+     */
+    "summary": ClientUsageSummary;
+    "daily": ClientUsageDay[] | null;
+    "models": ClientUsageModel[] | null;
+    "projects": ClientUsageProject[] | null;
+    "sessions": ClientUsageSession[] | null;
+    "sources": ClientTokenSource[] | null;
+
+    /**
+     * 日活分布日历：行 = 天（MM-DD），列 = 72 个 20 分钟桶，值 = 桶内去重活跃会话数
+     */
+    "activeHeatmapDays": string[] | null;
+    "activeHeatmap": (number[] | null)[] | null;
+}
+
+/**
+ * ClientUsageDay 单日聚合
+ */
+export interface ClientUsageDay {
+    /**
+     * MM-DD
+     */
+    "date": string;
+    "records": number;
+    "totalTokens": number;
+    "inputTokens": number;
+    "outputTokens": number;
+    "cacheRead": number;
+    "cacheWrite": number;
+
+    /**
+     * 日活分布：当日有 AI 调用的去重会话数 / 项目数
+     */
+    "activeSessions": number;
+    "activeProjects": number;
+}
+
+/**
+ * ClientUsageModel 单模型聚合
+ */
+export interface ClientUsageModel {
+    "model": string;
+    "records": number;
+    "totalTokens": number;
+}
+
+/**
+ * ClientUsageProject 单项目聚合
+ */
+export interface ClientUsageProject {
+    "project": string;
+    "records": number;
+    "totalTokens": number;
+}
+
+/**
+ * ClientUsageSession 单会话聚合
+ */
+export interface ClientUsageSession {
+    "sessionId": string;
+
+    /**
+     * workbuddy / workbuddy-ai
+     */
+    "source": string;
+    "title": string;
+    "project": string;
+    "records": number;
+    "totalTokens": number;
+
+    /**
+     * Unix 秒
+     */
+    "firstTs": number;
+    "lastTs": number;
+}
+
+/**
+ * ClientUsageSummary 汇总指标
+ */
+export interface ClientUsageSummary {
+    "records": number;
+
+    /**
+     * input + output + cacheWrite
+     */
+    "totalTokens": number;
+
+    /**
+     * 含缓存命中部分
+     */
+    "inputTokens": number;
+    "outputTokens": number;
+    "cacheRead": number;
+    "cacheWrite": number;
+
+    /**
+     * cacheRead / input × 100
+     */
+    "cacheHitRate": number;
+}
+
 export interface Config {
     "listen": string;
     "api_key": string;
     "auth_dir": string;
+
+    /**
+     * ClientAuthDirs 客户端登录凭证发现目录：官方客户端当前登录账号的明文凭证
+     * （workbuddy2api 系工具 OAuth 登录落盘的 workbuddy-*.json）搜索路径，
+     * 供账号管理「自动获取登录信息 → 一键导入」使用；支持 ~/ 前缀，可配多个。
+     */
+    "client_auth_dirs"?: string[] | null;
     "state_file": string;
     "schedule": ScheduleConfig;
     "pool": PoolConfig;
@@ -668,6 +851,12 @@ export interface ScheduleConfig {
     "refresh": RefreshConfig;
 
     /**
+     * SessionArchive 会话自动归档：把官方客户端中空闲超过阈值的已结束会话
+     * 标记为 archived（巡检间隔固定 30 分钟，与积分到期巡检一致）。
+     */
+    "session_archive": SessionArchiveConfig;
+
+    /**
      * Notify 推送通知（对齐 workbuddy2api notify.*）
      */
     "notify": NotifyConfig;
@@ -707,6 +896,18 @@ export interface SecurityConfig {
 }
 
 /**
+ * SessionArchiveConfig 会话自动归档配置
+ */
+export interface SessionArchiveConfig {
+    "enabled": boolean;
+
+    /**
+     * IdleDays 空闲阈值（天）：last_activity_at 距今超过该天数才归档；0 = 默认 7 天
+     */
+    "idle_days": number;
+}
+
+/**
  * SessionConfig 会话粘性配置
  */
 export interface SessionConfig {
@@ -715,7 +916,8 @@ export interface SessionConfig {
 }
 
 /**
- * SessionDrilldown 会话下钻结果：缓存命中率 KPI + 会话聚合列表。
+ * SessionDrilldown 会话下钻结果：缓存命中率 KPI + 会话聚合列表（全量，按 token 降序；
+ * 前端负责搜索过滤，日志上限 2000 条，会话数远小于该值，无需分页）。
  */
 export interface SessionDrilldown {
     "days": number;
@@ -736,7 +938,7 @@ export interface SessionDrilldown {
     "cacheHitRate": number;
 
     /**
-     * 按 token 降序，Top 20
+     * 按 token 降序
      */
     "sessions": SessionStat[] | null;
 }
@@ -748,6 +950,11 @@ export interface SessionDrilldown {
  */
 export interface SessionStat {
     "sessionId": string;
+
+    /**
+     * 会话标题（本机会话日志回填；与本机 session UUID 匹配才有值）
+     */
+    "title": string;
     "keyName": string;
     "firstTs": number;
     "lastTs": number;

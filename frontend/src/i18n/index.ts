@@ -9,6 +9,7 @@ import { en as enKeys } from "./en-keys";
 import { en as enChat } from "./en-chat";
 import { en as enLogs } from "./en-logs";
 import { en as enPrompts } from "./en-prompts";
+import { en as enClientTokens } from "./en-clienttokens";
 
 /**
  * 轻量 i18n：中文原文即 key。
@@ -34,6 +35,7 @@ const DICT: Record<string, string> = Object.assign(
   enChat,
   enLogs,
   enPrompts,
+  enClientTokens,
 );
 
 const STORAGE_KEY = "apiary.lang";

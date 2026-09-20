@@ -17,7 +17,9 @@ import type {
   BrowseParams,
   ChatParams,
   ChatResult,
+  ClientSession,
   ClientSwitchPrecheck,
+  ClientTokenStats,
   ConfigMeta,
   CreateKeyParams,
   CreateKeyResult,
@@ -146,6 +148,14 @@ export const accountsApi = {
   importCredentials(fileName: string, content: string, password = ""): Promise<ImportResult> {
     return call(() => API.AccountsAPI.ImportCredentials(fileName, content, password));
   },
+  /** 官方客户端当前登录账号探测（登录位 uid 明文 + 发现目录找可用明文凭证） */
+  clientSession(): Promise<ClientSession> {
+    return call(() => API.AccountsAPI.ClientSession());
+  },
+  /** 一键导入客户端当前登录账号（复制发现的明文凭证进 auth_dir） */
+  importClientSession(): Promise<ImportResult> {
+    return call(() => API.AccountsAPI.ImportClientSession());
+  },
   /** 导出凭证。password 非空 = 加密信封（返回信封 JSON 文本），空 = 明文 v1 结构 */
   exportCredentials(password = ""): Promise<string> {
     return call(() => API.AccountsAPI.ExportCredentials(password) as unknown as Promise<string>);
@@ -214,6 +224,10 @@ export const statsApi = {
   /** 官方口径用量对账（force = 跳过 30 分钟缓存重新拉取） */
   officialUsage(days: number, force = false): Promise<OfficialUsageReport | null> {
     return call(() => API.StatsAPI.OfficialUsage(days, force));
+  },
+  /** WorkBuddy 客户端自身 token 消耗（本机会话日志扫描；force = 跳过 5 分钟缓存重扫） */
+  clientTokenStats(days: number, force = false): Promise<ClientTokenStats | null> {
+    return call(() => API.StatsAPI.ClientTokenStats(days, force));
   },
   /** 会话下钻：缓存命中率 KPI + 会话 Top 聚合 */
   sessionDrilldown(days: number): Promise<SessionDrilldown | null> {
@@ -471,6 +485,10 @@ export const systemApi = {
   /** 发送桌面测试通知（macOS 首次调用会触发系统授权弹窗） */
   sendTestNotify(): Promise<void> {
     return call(() => API.SystemAPI.SendTestNotify());
+  },
+  /** 立即执行一轮会话自动归档，返回本次归档数量 */
+  sessionArchiveNow(): Promise<number> {
+    return call(() => API.SystemAPI.SessionArchiveNow());
   },
 };
 

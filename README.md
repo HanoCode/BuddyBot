@@ -59,6 +59,7 @@
 **周边能力**
 - 智能体一键接入：Claude Code / Codex / OpenCode / Pi / Kimi Code / CodeBuddy 配置自动写入，支持回滚
 - 统计报表：Token 消耗、成功率、P50/P90 延迟，全部真实日志聚合
+- 客户端消耗：扫描本机 WorkBuddy 会话日志（`~/.workbuddy` / `~/.workbuddy-ai`），聚合客户端自身真实 token 用量（输入/输出/缓存读写、模型/项目/会话排行），与网关口径并列
 - 聊天测试：内置调试台完整走鉴权/配额/路由/记账链路
 - 日志查看：请求日志 + 任务日志统一检索
 - 数据与备份：凭证、配置、密钥本地落盘，支持导出备份
@@ -210,7 +211,7 @@ workbuddy-desktop/
     ├── src/
     │   ├── styles/         # tokens.css（设计系统）+ app.css（组件样式）
     │   ├── components/     # layout（TitleBar/Sidebar）+ common（反馈/状态块）
-    │   ├── pages/          # Dashboard / Tokens / Accounts / Keys / Chat / Agents / Skills / Prompts / Logs / Settings
+    │   ├── pages/          # Dashboard / Tokens / ClientTokens / Accounts / Keys / Chat / Agents / Skills / Prompts / Logs / Settings
     │   ├── services/       # api.ts（IPC 桥接，零 mock）+ events.ts（后端事件订阅）
     │   ├── hooks/          # useAsync（真实错误暴露）/ useTheme
     │   └── types/          # 从 Wails 生成绑定再导出（单一类型来源）

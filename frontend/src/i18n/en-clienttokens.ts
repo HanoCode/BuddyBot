@@ -1,0 +1,58 @@
+/**
+ * 英文词典 · client-tokens 页面分片。key = 中文原文。
+ */
+export const en: Record<string, string> = {
+  "客户端消耗": "Client Usage",
+  "WorkBuddy 客户端自身消耗（本机会话日志聚合，不经网关）· 与「Token 消耗」的网关口径并列":
+    "WorkBuddy client's own usage (aggregated from local session logs, not via the gateway) · shown alongside gateway stats on Token Usage",
+  "重新扫描本机会话日志（跳过 5 分钟缓存）": "Rescan local session logs (skip 5-min cache)",
+  "重新扫描": "Rescan",
+  "扫描中…": "Scanning…",
+  "扫描失败": "Scan failed",
+  "扫描会话日志": "Scanning session logs",
+  "未安装以下版本的客户端（数据根不存在）：{a}": "Client not installed for the following variants (data root missing): {a}",
+  "合计 Token": "Total Tokens",
+  "{a} 条 AI 调用记录": "{a} AI call records",
+  "输入（含缓存）": "Input (incl. cache)",
+  "未命中 {a}": "Uncached {a}",
+  "输出": "Output",
+  "含思考与正文": "Includes thinking and content",
+  "缓存读": "Cache read",
+  "上游前缀缓存命中": "Upstream prefix-cache hits",
+  "缓存写": "Cache write",
+  "新写入前缀缓存": "Newly written prefix cache",
+  "缓存命中率": "Cache hit rate",
+  "缓存读 / 输入": "Cache read / input",
+  "会话数": "Sessions",
+  "按会话文件聚合": "Aggregated by session file",
+  "窗口内没有客户端消耗记录": "No client usage records in this window",
+  "使用 WorkBuddy 客户端进行 AI 对话后，这里会显示从本机会话日志聚合的真实 token 用量。":
+    "After chatting with AI in the WorkBuddy client, real token usage aggregated from local session logs will show here.",
+  "日消耗构成": "Daily usage breakdown",
+  "未命中输入 + 缓存读 + 输出 + 缓存写（缓存读计入输入）":
+    "Uncached input + cache read + output + cache write (cache read is part of input)",
+  "日活分布": "Daily active",
+  "20 分钟粒度 · 颜色越深活跃会话越多（悬停查看）":
+    "20-min granularity · darker = more active sessions (hover for details)",
+  "少": "Few",
+  "多": "Many",
+  "{a} {b}:{c} · {d} 会话活跃": "{a} {b}:{c} · {d} active sessions",
+  "未命中输入": "Uncached input",
+  "今天": "Today",
+  "模型消耗 Top": "Top models",
+  "按窗口内总 token 降序": "Descending by total tokens in window",
+  "暂无模型用量": "No model usage yet",
+  "{a} 次": "{a} calls",
+  "项目消耗 Top": "Top projects",
+  "按会话所属工作空间聚合": "Aggregated by session workspace",
+  "暂无项目用量": "No project usage yet",
+  "会话消耗排行": "Top sessions",
+  "Top 30 · 标题来自客户端会话（只读元信息，不含正文）":
+    "Top 30 · titles from client sessions (metadata only, no message content)",
+  "会话": "Session",
+  "项目": "Project",
+  "来源": "Source",
+  "调用": "Calls",
+  "最后活跃": "Last active",
+  "暂无会话记录": "No session records",
+};

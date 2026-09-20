@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Coins, Users, KeyRound, MessageSquare, ScrollText, Settings,
   Power, RotateCw, RefreshCw, Moon, Search, CornerDownLeft, ArrowUpDown, SlidersHorizontal,
-  Coffee, Blocks, Puzzle, ArrowUpCircle, FolderOpen, Archive,
+  Coffee, Blocks, Puzzle, ArrowUpCircle, FolderOpen, Archive, AppWindow,
 } from "lucide-react";
 import { accountsApi, configApi, gatewayApi, injectApi, keysApi, powerApi, systemApi } from "../../services/api";
 import { toast } from "../common/Feedback";
@@ -96,6 +96,7 @@ export default function CommandPalette() {
     const list: CommandItem[] = [
       { id: "page-dashboard", label: t("仪表盘"), group: t("页面"), icon: <LayoutDashboard size={14} strokeWidth={2} />, run: () => go("/") },
       { id: "page-tokens", label: t("Token 消耗"), group: t("页面"), icon: <Coins size={14} strokeWidth={2} />, run: () => go("/tokens") },
+      { id: "page-client-tokens", label: t("客户端消耗"), group: t("页面"), icon: <AppWindow size={14} strokeWidth={2} />, run: () => go("/client-tokens") },
       { id: "page-accounts", label: t("账号管理"), group: t("页面"), icon: <Users size={14} strokeWidth={2} />, run: () => go("/accounts") },
       { id: "page-keys", label: t("API 密钥"), group: t("页面"), icon: <KeyRound size={14} strokeWidth={2} />, run: () => go("/keys") },
       { id: "page-chat", label: t("聊天测试"), group: t("页面"), icon: <MessageSquare size={14} strokeWidth={2} />, run: () => go("/chat") },

@@ -4,11 +4,14 @@
 // 参考 WorkDaddy 悬浮组件的做法：
 //   1. CSS 绘制的机器人按钮（圆角外壳 + 眨眼双目 + 天线），可拖拽，
 //      释放后水平吸附回右缘，垂直位置持久化
-//   2. 闲置 5 秒自动停靠进右缘（只露头部），鼠标靠近边缘展开
+//   2. 自动停靠（默认关闭，面板设置里可开启）：闲置 5 秒收进右缘
+//      （只露头部），鼠标靠近边缘展开
 //   3. 点击机器人弹出白色主题多 Tab 面板（账号 / 任务 / 模型 / 设置），
 //      面板打开时机器人隐藏，关闭后恢复
 //   4. 账号池有 72h 内到期积分时机器人头顶亮琥珀色徽标
-//   5. 通过 CDP binding（window.__wbdesk）把动作回传给桌面端
+//   5. 检测到官方客户端已登录且账号池没有该账号时，账号 Tab 顶部提示
+//      一键导入（复制发现的明文凭证，token 加密形态则引导扫码）
+//   6. 通过 CDP binding（window.__wbdesk）把动作回传给桌面端
 //
 // 幂等：重复注入前先执行 __wbdeskCleanup 清理旧实例。
 // 与官方 DOM 的耦合只集中在「确认按钮文案」启发式，客户端升级
@@ -24,6 +27,210 @@
   // 新旧实例会互相打架（典型症状：头像被旧实例反复改 src 导致不停跳动）。
   var GEN = (window.__wbdeskGen = (window.__wbdeskGen || 0) + 1);
 
+  // ---------- 语言：设置 Tab 手动开关（存 localStorage），默认跟随客户端 ----------
+  // 主程序实时切语言不会重载页面（URL ?locale= 仅在窗口创建时由主进程注入一次），
+  // 自动跟随只在客户端重启后生效；手动选中文/English 则立即刷新生效。
+  var LANG_KEY = "wbdesk-lang";
+  var LANG = "auto";
+  try { LANG = localStorage.getItem(LANG_KEY) || "auto"; } catch (e) {}
+  var LOCALE = (location.search.match(/[?&]locale=([^&]+)/) || [])[1] || "";
+  var EN = LANG === "en" || (LANG === "auto" &&
+    (/^en/i.test(LOCALE) || (!LOCALE && /^en/i.test(navigator.language || ""))));
+
+  // 英文文案表：key 为面板中文原文（%s 为占位），英文模式整体替换；
+  // 未收录的字符串回落中文，新增文案只需补表。
+  var EN_TEXTS = {
+    // Tab 与通用按钮
+    "账号": "Accounts", "任务": "Tasks", "指令": "Prompts", "主题": "Theme",
+    "模型": "Models", "增强": "Enhance", "设置": "Settings", "关闭": "Close",
+    "刷新": "Refresh", "生成": "Generate", "执行": "Run", "执行中": "Running",
+    "切换": "Switch", "切换中…": "Switching…", "导入中…": "Importing…", "删": "Del",
+    "已复制 ✓": "Copied ✓", "点击复制": "Click to copy", "生成中…": "Generating…",
+    "未命名账号": "Unnamed account", "未分类": "Uncategorized",
+    // 设置 Tab：面板语言开关
+    "面板语言": "Panel language",
+    "仅作用于注入面板，与主程序界面无关": "Applies to this panel only — independent of the host app UI",
+    "自动": "Auto",
+    "跟随主程序（客户端重启后生效）": "Follow the host app (takes effect after the client restarts)",
+    "已切换语言，刷新页面生效…": "Language changed; reloading to apply…",
+    // FAB
+    "BuddyBot 悬浮机器人，点击打开面板，可拖动": "BuddyBot floating robot — click to open the panel, draggable",
+    "BuddyBot 悬浮机器人": "BuddyBot floating robot",
+    "在线账号 / 今日 Token 消耗": "Online accounts / tokens used today",
+    "有积分将在 72h 内到期": "Some credits expire within 72h",
+    // 账号 Tab
+    "账号池账号": "Account pool",
+    "⚡ 换号": "⚡ Switch", "换号": "Switch",
+    "自动挑选下一个在线账号切换登录（客户端会重启）": "Auto-pick the next online account and switch login (client restarts)",
+    "实时余额与当前登录标记；「设为登录」把该账号写入官方登录位并重启客户端（当前登录文件会先自动备份）。":
+      "Live balances and current-login badge; “Set as login” writes the account to the official login slot and restarts the client (the current login file is backed up first).",
+    "登录态备份": "Login backups",
+    "当前账号备注名（备份用，可留空）": "Note name for the current account (optional)",
+    "备份当前登录": "Back up current login",
+    "备份=快照官方登录文件（无需注入）；切换=校验后写入登录位并重启客户端，跨通道账号会被拒绝。":
+      "Backup = snapshot of the official login file (no injection needed); Switch = validate then write to the login slot and restart the client. Cross-realm accounts are rejected.",
+    "暂无备份。提示：要切号可直接用上方池账号的「设为登录」，无需先备份。":
+      "No backups yet. Tip: to switch accounts just use “Set as login” on a pool account above — no backup needed.",
+    "删除该备份": "Delete this backup",
+    // 换号 / 导入 / 防休眠
+    "正在挑选在线账号切换，客户端将自动重启…": "Picking the next online account to switch; the client will restart…",
+    "已开启防休眠，任务执行期间系统不会休眠": "Keep-awake enabled; the system won't sleep while tasks run",
+    // 任务 Tab
+    "全部任务（全池执行）": "All tasks (run on whole pool)",
+    "按顺序执行全部可运行任务": "Run all runnable tasks in order",
+    "▶ 全部执行": "▶ Run all", "全部执行": "Run all",
+    "最近运行": "Recent runs",
+    "执行中…": "Running…",
+    "已成功执行": "ran successfully",
+    "失败": "Failed", "成功": "Success", "跳过": "Skipped",
+    "暂无运行记录": "No runs yet",
+    "每日签到": "Daily check-in", "猫猫旅行": "Kitty travel", "保活刷新": "Keep-alive refresh",
+    "活跃地图": "Activity map", "开学季": "Back-to-school", "夜猫子": "Night owl", "成长任务": "Growth quests",
+    // 指令 Tab
+    "提效指令（": "Prompts (", "）": ")",
+    "搜索标题 / 场景 / 指令全文…": "Search title / scene / prompt…",
+    "点击指令直接填入对话输入框；收藏与管理见桌面端「提效指令库」。":
+      "Click a prompt to fill it into the chat input; favorites and management live in the desktop “Prompt Library”.",
+    "点击填入输入框": "Click to fill into chat input",
+    "仅显示前 60 条，共": "Showing first 60 of",
+    "无匹配指令": "No matching prompts",
+    "指令库为空": "Prompt library is empty",
+    "指令加载中…": "Loading prompts…",
+    "已填入对话输入框：%s": "Filled into chat input: %s",
+    "未找到对话输入框（请先进入会话页面）": "Chat input not found (open a conversation first)",
+    "深度研究": "Deep research", "数据分析": "Data analysis", "文档写作": "Doc writing",
+    "演示文稿": "Presentations", "会议沟通": "Meetings", "邮件日程": "Email & calendar",
+    "项目管理": "Project mgmt", "研发技术": "Dev & tech", "增长运营": "Growth ops",
+    "行政人事财务": "Admin / HR / Finance",
+    // 主题 Tab
+    "外观": "Appearance",
+    "外观作用于 WorkBuddy 界面：自定义主题注入色板并联动官方深浅色（防弹回），刷新后自动恢复。":
+      "Appearance applies to the WorkBuddy UI: custom themes inject a palette and sync with the official light/dark mode (snap-back guarded), restored automatically after reload.",
+    "宠物": "Pets",
+    "悬浮机器人皮肤": "Floating robot skin",
+    "Codex 宠物精灵动画（素材见 pets 目录 LICENSE）": "Codex pet sprite animation (assets: see LICENSE in the pets folder)",
+    "宠物加载中…": "Loading pets…",
+    "头像": "Avatar",
+    "用户头像": "User avatar",
+    "替换 WorkBuddy 左下角用户菜单头像": "Replaces the avatar in the WorkBuddy user menu (bottom-left)",
+    "壁纸": "Wallpaper",
+    "WorkBuddy 壁纸": "WorkBuddy wallpaper",
+    "铺在 WorkBuddy 界面底层": "Laid under the WorkBuddy UI",
+    "预设壁纸": "Preset", "自定义壁纸": "Custom",
+    "壁纸加载中…": "Loading wallpapers…",
+    "暂无内置壁纸": "No built-in wallpapers",
+    "点击选择图片，或拖拽到此处": "Click to choose an image, or drag one here",
+    "点击或拖拽上传壁纸（PNG / JPG / WebP，保存在本机）": "Click or drag to upload a wallpaper (PNG / JPG / WebP, stored locally)",
+    "删除该壁纸": "Delete this wallpaper",
+    "还没有自定义壁纸，先上传一张（最多 %s 张）": "No custom wallpapers yet; upload one first (up to %s)",
+    "AI 生成壁纸": "AI wallpaper",
+    "一句话让网关模型画一张 3:1 横幅（左缘留白给界面）": "Let a gateway model paint a 3:1 banner from one line (left edge kept clear for the UI)",
+    "例：深蓝夜空下的雪山森林，极简扁平风": "e.g. snowy forest under a deep-blue night sky, minimal flat style",
+    "生成所用网关模型": "Gateway model used for generation",
+    "背景蒙版": "Background mask",
+    "压暗壁纸保证可读": "Darkens the wallpaper for readability",
+    "背景毛玻璃": "Background blur",
+    "模糊壁纸": "Blurs the wallpaper",
+    "消息文字阴影": "Message text shadow",
+    "壁纸下提升消息可读性": "Improves message readability over wallpapers",
+    "不使用壁纸": "No wallpaper",
+    "先描述一下想要的壁纸，例如：深蓝夜空雪山森林": "Describe the wallpaper first, e.g. snowy forest under a deep-blue night sky",
+    "网关模型未就绪，请确认网关已启动且模型已同步": "Gateway models not ready; make sure the gateway is running and models are synced",
+    "正在让模型画壁纸，约需几十秒…": "Asking the model to paint the wallpaper; may take a minute…",
+    "AI 生成失败：%s": "AI generation failed: %s",
+    "AI 壁纸已生成并应用 ✓": "AI wallpaper generated and applied ✓",
+    "AI 壁纸栅格化失败：%s": "AI wallpaper rasterization failed: %s",
+    "AI 壁纸渲染失败（SVG 无效）": "AI wallpaper render failed (invalid SVG)",
+    "仅支持 PNG / JPG / WebP": "Only PNG / JPG / WebP supported",
+    "仅支持 WebP / PNG / JPG 精灵图": "Only WebP / PNG / JPG spritesheets supported",
+    "图片处理失败": "Failed to process image",
+    "图片读取失败": "Failed to read image",
+    "自定义壁纸最多 %s 张，请先删除再上传": "Up to %s custom wallpapers; delete one before uploading",
+    // 模型 Tab
+    "网关接入地址": "Gateway endpoint",
+    "OpenAI 兼容端点，点击复制；密钥在桌面端「API 密钥」创建。": "OpenAI-compatible endpoint, click to copy; create keys in the desktop “API Keys” page.",
+    "可用模型（": "Available models (",
+    "搜索模型 ID…": "Search model ID…",
+    "点击模型行复制 ID；网关模型供外部工具（Claude Code 等）接入使用。":
+      "Click a model row to copy its ID; gateway models are for external tools (Claude Code etc.).",
+    "点击复制模型 ID": "Click to copy model ID",
+    " 次": " calls", "仅观测": "Observed only", "未使用": "Unused",
+    "仅显示前 80 个，共": "Showing first 80 of",
+    "无匹配模型": "No matching models",
+    "暂无模型（桌面端定时刷新或保活后同步）": "No models yet (synced by desktop scheduled refresh or keep-alive)",
+    "已复制模型 ID：%s": "Copied model ID: %s",
+    "（网关模型未就绪）": "(gateway models not ready)",
+    // 增强 Tab
+    "免打扰": "Do not disturb",
+    "已开启": "Enabled",
+    "全部开": "Enable all",
+    "弹窗自动点允许": "Auto-allow dialogs", "确认弹窗自动允许": "Confirmation dialogs are allowed automatically",
+    "沙箱外写文件免确认": "Write files without confirmation", "工作区外文件直接写入": "Files outside the workspace are written directly",
+    "常用命令行免确认": "Run commands without confirmation", "常用命令直接执行": "Common commands run directly",
+    "大批量删除免确认": "Bulk delete without confirmation", "批量删除直接进回收站": "Bulk deletes go straight to trash",
+    "系统级工具放行": "Allow system tools", "系统管理命令直接执行": "System admin commands run directly",
+    "会话": "Conversation",
+    "会话自动归档": "Auto-archive sessions", "空闲超阈值自动归档（阈值在桌面端设置）": "Archives sessions idle past the threshold (configured in the desktop app)",
+    "继续异常中断会话": "Resume interrupted sessions", "检测到中断自动继续": "Auto-resume when an interruption is detected",
+    "引用消息文本": "Quote message text", "选中文字一键插入输入框": "One click to insert selected text into the input",
+    "会话消息索引": "Message index", "悬浮定位条，点击跳到任意消息": "Floating rail to jump to any message",
+    // 设置 Tab
+    "面板": "Panel",
+    "机器人自动停靠": "Auto-dock robot", "闲置 5 秒收进右缘": "Docks into the right edge after 5s idle",
+    "电脑": "Computer",
+    "防休眠": "Keep awake", "任务执行期间系统不休眠": "System stays awake while tasks run",
+    "注入体检": "Self check",
+    "自检与验证": "Self-check & verify", "CDP / 面板 / 主题 / 原生控件逐项检查": "Checks CDP / panel / theme / native controls one by one",
+    "运行体检": "Run check", "逐项体检并出报告": "Run all checks and report",
+    "验证截图": "Verify screenshot", "截取当前客户端画面存档验证生效": "Capture the client screen to verify effects",
+    "体检中…": "Checking…",
+    "正常": "OK", "异常": "Fail",
+    "未收到体检报告": "No report received",
+    "注入体检全部通过 ✓": "All checks passed ✓",
+    "体检发现异常项，见详情": "Issues found — see details",
+    "关于": "About",
+    "由桌面端注入 · 主题/外观在「主题」Tab": "Injected by the desktop app · theme/appearance in the Theme tab",
+    "完整设置（网关 / 定时任务 / 备份 / 更新）请打开桌面端 BuddyBot 控制台。":
+      "For full settings (gateway / schedules / backups / updates) open the BuddyBot desktop console.",
+    // 账号池 / 客户端会话
+    "当前": "Current",
+    "⚠ 72h 内到期 %s": "⚠ %s expiring in 72h",
+    " 分": " pts",
+    "设为登录": "Set as login",
+    "账号池暂无账号（桌面端「深度刷新」后显示）": "Account pool is empty (shown after “Deep refresh” on desktop)",
+    "检测到官方客户端已登录 <b>%s</b>，发现可用凭证": "Official client logged in as <b>%s</b>; usable credentials found",
+    "一键导入": "Import",
+    "官方客户端已登录 %s，未发现可导入的明文凭证（客户端 token 为加密形态），可在桌面端「账号管理 → 接入账号」扫码授权。":
+      "Official client logged in as %s; no plain-text credentials to import (client token is encrypted). Scan to authorize in desktop “Account Mgmt → Connect accounts”.",
+    // 头像
+    "官方": "Official", "官方默认": "Official default",
+    "自定义头像": "Custom avatar", "删除该头像": "Delete this avatar", "添加头像": "Add avatar",
+    "头像保存失败，请清理存储空间后重试": "Failed to save avatar; free up storage and retry",
+    "自定义头像最多 %s 张，请先删除再上传": "Up to %s custom avatars; delete one before uploading",
+    "头像图片处理失败": "Failed to process avatar image",
+    "头像图片读取失败": "Failed to read avatar image",
+    "墨蓝": "Ink blue", "珊瑚橙": "Coral orange", "薄荷绿": "Mint", "堇紫": "Violet", "石墨": "Graphite",
+    // 主题名
+    "官方浅色": "Light (official)", "官方深色": "Dark (official)", "护眼绿": "Eye care",
+    "赛博紫": "Cyber purple", "毛玻璃": "Glass",
+    // 宠物
+    "经典": "Classic", "经典机器人": "Classic robot", "删除该宠物": "Delete this pet",
+    "上传自定义": "Upload custom",
+    "选择 Codex 宠物精灵图（spritesheet，8 列布局）": "Choose a Codex pet spritesheet (8-column grid)",
+    "图片尺寸不像精灵图（需 8 列横排网格）": "Image doesn't look like a spritesheet (8-column grid required)",
+    "已添加自定义宠物：%s": "Custom pet added: %s",
+    "精灵图处理失败": "Failed to process spritesheet",
+    "自定义宠物": "Custom pet",
+    // 消息索引 / 引用 / 徽标
+    "引用": "Quote",
+    "在线": "online", "今日": "today",
+  };
+  function T(s, sub) {
+    var out = EN && EN_TEXTS[s] ? EN_TEXTS[s] : s;
+    if (sub !== undefined) out = out.replace("%s", String(sub));
+    return out;
+  }
+
   var BINDING = "__wbdesk";
   var EDGE_GAP = 18;          // 机器人距右/下缘的间距
   var DRAG_THRESHOLD = 6;     // 拖拽判定阈值（px），以内视为点击
@@ -38,7 +245,7 @@
   var TASKS = ["checkin", "travel", "keepalive", "activity", "school", "cat", "growth"];
 
   var state = {
-    enh: { dnd: false, file: false, cmd: false, del: false, sys: false, resume: false, quote: false, nav: false },
+    enh: { dnd: false, file: false, cmd: false, del: false, sys: false, resume: false, quote: false, nav: false, arch: false },
     sys: { awake: false }, // 防休眠等系统状态（桌面端推送）
     accounts: [],
     pool: [],
@@ -99,7 +306,7 @@
     "--p-btn:#478cbf;--p-ghost:rgba(71,140,191,.22);--p-ghost-fg:#8fc1e3;",
     "--p-bg:rgba(19,20,23,.78);--p-tab-on-bg:#f2f3f5;--p-tab-on-fg:#17181c;",
     "--p-shadow:0 16px 48px rgba(0,0,0,.55);--p-border:rgba(255,255,255,.09);--p-sw:#3a3d46;--p-sw-on:#e8eaf0;",
-    "position:fixed;z-index:2147483647;right:" + EDGE_GAP + "px;bottom:" + (EDGE_GAP + 10) + "px;width:420px;height:560px;max-height:88vh;",
+    "position:fixed;z-index:2147483647;right:" + EDGE_GAP + "px;bottom:" + (EDGE_GAP + 10) + "px;width:470px;height:560px;max-height:88vh;",
     "display:none;flex-direction:column;border-radius:16px;overflow:hidden;",
     "font:12.5px/1.6 -apple-system,'Segoe UI',sans-serif;color:var(--p-fg);",
     /* 半透明毛玻璃：backdrop-filter 失效时由 .78 透明度兜底 */
@@ -107,12 +314,17 @@
     "box-shadow:var(--p-shadow);border:1px solid var(--p-border);background-size:cover;background-position:center;}",
     "#wbdesk-panel .p-head{display:flex;justify-content:space-between;align-items:center;padding:12px 14px 8px;}",
     "#wbdesk-panel .p-title{font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:6px;}",
+    "#wbdesk-panel .p-logo{width:18px;height:18px;flex:none;border-radius:5px;",
+    "box-shadow:0 0 6px rgba(71,140,191,.8),0 0 14px rgba(71,140,191,.45);",
+    "animation:wbdesk-logo-glow 2.4s ease-in-out infinite;}",
+    "@keyframes wbdesk-logo-glow{0%,100%{box-shadow:0 0 6px rgba(71,140,191,.8),0 0 14px rgba(71,140,191,.45);}",
+    "50%{box-shadow:0 0 9px rgba(143,193,227,.95),0 0 22px rgba(71,140,191,.65);}}",
     "#wbdesk-panel .p-close{border:none;background:transparent;color:var(--p-sub);font-size:14px;cursor:pointer;",
     "padding:2px 6px;border-radius:6px;line-height:1;}",
     "#wbdesk-panel .p-close:hover{background:var(--p-row);color:var(--p-fg);}",
     "#wbdesk-panel .p-tabs{display:flex;gap:4px;padding:2px 10px 8px;border-bottom:1px solid var(--p-line);}",
-    "#wbdesk-panel .p-tab{flex:1;border:none;background:transparent;cursor:pointer;font-size:12px;color:var(--p-sub);",
-    "padding:5px 0 6px;display:flex;align-items:center;justify-content:center;gap:4px;border-radius:8px;}",
+    "#wbdesk-panel .p-tab{flex:1;min-width:0;border:none;background:transparent;cursor:pointer;font-size:12px;color:var(--p-sub);",
+    "padding:5px 0 6px;display:flex;align-items:center;justify-content:center;gap:4px;border-radius:8px;white-space:nowrap;}",
     "#wbdesk-panel .p-tab.on{background:var(--p-tab-on-bg);color:var(--p-tab-on-fg);font-weight:600;}",
     "#wbdesk-panel .p-body{flex:1;min-height:0;padding:10px 14px 14px;overflow:auto;}",
     "#wbdesk-panel .p-body::-webkit-scrollbar{width:4px;}",
@@ -187,6 +399,8 @@
     "#wbdesk-fab.petsprite .wb-antenna,#wbdesk-fab.petsprite .wb-antenna-dot,#wbdesk-fab.petsprite .wb-face{display:none;}",
     "#wbdesk-fab.petsprite .wb-robot{background:transparent!important;box-shadow:none;border-radius:0;}",
     "#wbdesk-fab.petsprite .wb-sprite{position:absolute;left:50%;bottom:0;transform:translateX(-50%);background-repeat:no-repeat;}",
+    /* 精灵图帧（62px）高出本体（34px）约 28px，徽标需抬到精灵头顶之上避免被遮挡 */
+    "#wbdesk-fab.petsprite #wbdesk-fab-stat{bottom:calc(100% + 32px);}",
     "#wbdesk-fab.quiet.petsprite{transform:translateX(" + (FAB_W - 6 + EDGE_GAP + 10) + "px);}",
     /* 头像：预设图片 + 自定义上传（参考 WorkDaddy 头像选择） */
     "#wbdesk-panel .avats{display:flex;gap:8px;flex-wrap:wrap;padding:4px 0 2px;align-items:center;}",
@@ -243,6 +457,26 @@
     "#wbdesk-mnav-tip{position:fixed;z-index:2147483647;display:none;max-width:260px;background:rgba(19,20,23,.92);",
     "color:#f2f3f5;font:11px/1.5 -apple-system,sans-serif;padding:6px 9px;border-radius:8px;",
     "box-shadow:0 6px 20px rgba(0,0,0,.4);pointer-events:none;word-break:break-all;}",
+    /* FAB 运行徽标：在线账号数 + 今日 Token（随 fab 移动，停靠时淡出） */
+    "#wbdesk-fab-stat{position:absolute;right:0;bottom:calc(100% + 8px);z-index:2;white-space:nowrap;display:none;",
+    "background:rgba(19,20,23,.82);color:#e8eaf0;font-size:10.5px;line-height:1;padding:4px 8px;border-radius:8px;",
+    "box-shadow:0 2px 8px rgba(0,0,0,.35);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);",
+    "transition:opacity .25s;}",
+    "#wbdesk-fab-stat.show{display:block;}",
+    "#wbdesk-fab-stat b{color:#478cbf;font-weight:600;}",
+    "#wbdesk-fab.quiet #wbdesk-fab-stat{opacity:0;pointer-events:none;}",
+    /* 提效指令列表（点击直填输入框） */
+    "#wbdesk-panel .prow{padding:7px 8px;border:1px solid var(--p-line);border-radius:8px;margin:4px 0;background:var(--p-row);cursor:pointer;}",
+    "#wbdesk-panel .prow:hover{background:var(--p-ghost);}",
+    "#wbdesk-panel .prow .pt{font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+    "#wbdesk-panel .prow .ps{color:var(--p-sub);font-size:10.5px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+    /* AI 生成壁纸（模型选择下拉） */
+    "#wbdesk-panel select{width:100%;box-sizing:border-box;border:1px solid var(--p-line);border-radius:6px;",
+    "padding:4px 6px;font-size:11.5px;background:var(--p-input);color:var(--p-fg);margin:0;}",
+    /* 注入体检报告行 */
+    "#wbdesk-panel .doc-row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:6px 0;",
+    "border-top:1px solid var(--p-line-soft);font-size:11.5px;}",
+    "#wbdesk-panel .doc-row .dd{color:var(--p-sub);font-size:10.5px;margin-top:1px;word-break:break-all;}",
     "@media(prefers-reduced-motion:reduce){#wbdesk-fab,.wb-eye,.wb-antenna-dot{animation:none!important;transition:none!important}}",
   ].join("");
   var style = document.createElement("style");
@@ -253,9 +487,10 @@
   // ---------- 悬浮机器人 ----------
   var fab = document.createElement("div");
   fab.id = "wbdesk-fab";
-  fab.title = "BuddyBot 悬浮机器人，点击打开面板，可拖动";
+  fab.title = T("BuddyBot 悬浮机器人，点击打开面板，可拖动");
   fab.innerHTML =
-    '<span id="wbdesk-fab-badge" title="有积分将在 72h 内到期"></span>' +
+    '<span id="wbdesk-fab-stat" title="' + T("在线账号 / 今日 Token 消耗") + '"></span>' +
+    '<span id="wbdesk-fab-badge" title="' + T("有积分将在 72h 内到期") + '"></span>' +
     '<div class="wb-robot">' +
     '<span class="wb-antenna"></span><span class="wb-antenna-dot"></span>' +
     '<div class="wb-face"><span class="wb-eye"></span><span class="wb-eye"></span></div>' +
@@ -267,120 +502,167 @@
   var ICON = {
     account: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
     task: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H9"/><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M2 12v4M22 12v4M9 12v2M15 12v2M9 17h6"/></svg>',
+    prompts: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg>',
     theme: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>',
     model: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>',
     enh: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>',
     setting: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
   };
 
+  // 程序 Logo（与 build/appicon.svg 同源；注入页无法加载本地资源，故内联为 data URI）
+  var APP_LOGO = "data:image/svg+xml," + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">' +
+    '<g transform="translate(100,100) scale(0.8047)">' +
+    '<rect width="1024" height="1024" rx="224" fill="#232a38"/>' +
+    '<g fill="#478cbf"><circle cx="344" cy="352" r="76"/><circle cx="512" cy="322" r="84"/>' +
+    '<circle cx="680" cy="352" r="76"/><rect x="252" y="340" width="520" height="440" rx="170"/></g>' +
+    '<circle cx="392" cy="560" r="84" fill="#ffffff"/><circle cx="632" cy="560" r="84" fill="#ffffff"/>' +
+    '<circle cx="392" cy="560" r="38" fill="#232a38"/><circle cx="632" cy="560" r="38" fill="#232a38"/>' +
+    '<rect x="488" y="580" width="48" height="132" rx="24" fill="#232a38"/>' +
+    '<rect x="330" y="684" width="364" height="64" rx="30" fill="#232a38"/>' +
+    '<g fill="#478cbf"><rect x="370" y="684" width="44" height="42" rx="12"/><rect x="610" y="684" width="44" height="42" rx="12"/></g>' +
+    "</g></svg>");
+
   var panel = document.createElement("div");
   panel.id = "wbdesk-panel";
   panel.innerHTML =
-    '<div class="p-head"><div class="p-title">🤖 BuddyBot</div>' +
-    '<button class="p-close" id="wbdesk-close" title="关闭">✕</button></div>' +
+    '<div class="p-head"><div class="p-title"><img class="p-logo" src="' + APP_LOGO + '" alt="BuddyBot"/>BuddyBot</div>' +
+    '<button class="p-close" id="wbdesk-close" title="' + T("关闭") + '">✕</button></div>' +
     '<div class="p-tabs">' +
-    tabBtn("account", "账号") + tabBtn("task", "任务") + tabBtn("theme", "主题") + tabBtn("model", "模型") + tabBtn("enh", "增强") + tabBtn("setting", "设置") +
+    tabBtn("account", T("账号")) + tabBtn("task", T("任务")) + tabBtn("prompts", T("指令")) + tabBtn("theme", T("主题")) + tabBtn("model", T("模型")) + tabBtn("enh", T("增强")) + tabBtn("setting", T("设置")) +
     "</div>" +
     '<div class="p-body">' +
     /* 账号 Tab */
     '<div class="pane" data-pane="account">' +
-    '<div class="row"><span class="blk-t">账号池账号</span><button class="ghost" id="wbdesk-pool-refresh">刷新</button></div>' +
+    '<div class="row"><span class="blk-t">' + T("账号池账号") + '</span>' +
+    '<span style="display:flex;gap:5px;flex:none">' +
+    '<button class="ghost" id="wbdesk-switch-next" title="' + T("自动挑选下一个在线账号切换登录（客户端会重启）") + '">⚡ ' + T("换号") + '</button>' +
+    '<button class="ghost" id="wbdesk-pool-refresh">' + T("刷新") + '</button></span></div>' +
+    '<div id="wbdesk-clisess" style="display:none"></div>' +
     '<div id="wbdesk-pool"></div>' +
-    '<div class="tip">实时余额与当前登录标记；「设为登录」把该账号写入官方登录位并重启客户端（当前登录文件会先自动备份）。</div>' +
+    '<div class="tip">' + T("实时余额与当前登录标记；「设为登录」把该账号写入官方登录位并重启客户端（当前登录文件会先自动备份）。") + '</div>' +
     '<div class="sec"></div>' +
-    '<div class="row"><span class="blk-t">登录态备份</span><button class="ghost" id="wbdesk-refresh">刷新</button></div>' +
-    '<input id="wbdesk-name" placeholder="当前账号备注名（备份用，可留空）"/>' +
-    '<button id="wbdesk-backup" style="width:100%">备份当前登录</button>' +
+    '<div class="row"><span class="blk-t">' + T("登录态备份") + '</span><button class="ghost" id="wbdesk-refresh">' + T("刷新") + '</button></div>' +
+    '<input id="wbdesk-name" placeholder="' + T("当前账号备注名（备份用，可留空）") + '"/>' +
+    '<button id="wbdesk-backup" style="width:100%">' + T("备份当前登录") + '</button>' +
     '<div id="wbdesk-list"></div>' +
-    '<div class="tip">备份=快照官方登录文件（无需注入）；切换=校验后写入登录位并重启客户端，跨通道账号会被拒绝。</div>' +
+    '<div class="tip">' + T("备份=快照官方登录文件（无需注入）；切换=校验后写入登录位并重启客户端，跨通道账号会被拒绝。") + '</div>' +
     "</div>" +
     /* 任务 Tab（全量任务 + 一键执行） */
     '<div class="pane" data-pane="task">' +
-    '<div class="row"><span class="blk-t">全部任务（全池执行）</span>' +
-    '<span><button class="ghost" id="wbdesk-tasks-refresh">刷新</button> ' +
-    '<button id="wbdesk-task-all" data-tip="按顺序执行全部可运行任务">▶ 全部执行</button></span></div>' +
+    '<div class="row"><span class="blk-t">' + T("全部任务（全池执行）") + '</span>' +
+    '<span><button class="ghost" id="wbdesk-tasks-refresh">' + T("刷新") + '</button> ' +
+    '<button id="wbdesk-task-all" data-tip="' + T("按顺序执行全部可运行任务") + '">▶ ' + T("全部执行") + '</button></span></div>' +
     '<div id="wbdesk-tasks"></div>' +
     '<div class="sec"></div>' +
-    '<div class="blk-t">最近运行</div>' +
+    '<div class="blk-t">' + T("最近运行") + '</div>' +
     '<div id="wbdesk-history"></div>' +
+    "</div>" +
+    /* 指令 Tab（提效指令库，点击直填对话输入框） */
+    '<div class="pane" data-pane="prompts">' +
+    '<div class="row"><span class="blk-t">' + T("提效指令（") + '<span id="wbdesk-prompt-count">0</span>' + T("）") + '</span></div>' +
+    '<input id="wbdesk-prompt-search" placeholder="' + T("搜索标题 / 场景 / 指令全文…") + '"/>' +
+    '<div id="wbdesk-prompt-list"></div>' +
+    '<div class="tip">' + T("点击指令直接填入对话输入框；收藏与管理见桌面端「提效指令库」。") + '</div>' +
     "</div>" +
     /* 主题 Tab（外观 / 头像 / 壁纸，全部作用于 WorkBuddy 本体，参考 WorkDaddy「主题」页） */
     '<div class="pane" data-pane="theme">' +
-    '<div class="grp"><span class="grp-t">外观</span></div>' +
+    '<div class="grp"><span class="grp-t">' + T("外观") + '</span></div>' +
     '<div class="card"><div class="themes" id="wbdesk-themes"></div>' +
-    '<div class="tip">外观作用于 WorkBuddy 界面：自定义主题注入色板并联动官方深浅色（防弹回），刷新后自动恢复。</div></div>' +
-    '<div class="grp"><span class="grp-t">宠物</span></div>' +
-    '<div class="card"><div class="row"><span class="lbl"><b>悬浮机器人皮肤</b><em>Codex 宠物精灵动画（素材见 pets 目录 LICENSE）</em></span></div>' +
-    '<div class="petgrid" id="wbdesk-petgrid"><div class="tip" style="grid-column:1/-1">宠物加载中…</div></div>' +
+    '<div class="tip">' + T("外观作用于 WorkBuddy 界面：自定义主题注入色板并联动官方深浅色（防弹回），刷新后自动恢复。") + '</div></div>' +
+    '<div class="grp"><span class="grp-t">' + T("宠物") + '</span></div>' +
+    '<div class="card"><div class="row"><span class="lbl"><b>' + T("悬浮机器人皮肤") + '</b><em>' + T("Codex 宠物精灵动画（素材见 pets 目录 LICENSE）") + '</em></span></div>' +
+    '<div class="petgrid" id="wbdesk-petgrid"><div class="tip" style="grid-column:1/-1">' + T("宠物加载中…") + '</div></div>' +
     "</div>" +
-    '<div class="grp"><span class="grp-t">头像</span></div>' +
-    '<div class="card"><div class="row"><span class="lbl"><b>用户头像</b><em>替换 WorkBuddy 左下角用户菜单头像</em></span></div>' +
+    '<div class="grp"><span class="grp-t">' + T("头像") + '</span></div>' +
+    '<div class="card"><div class="row"><span class="lbl"><b>' + T("用户头像") + '</b><em>' + T("替换 WorkBuddy 左下角用户菜单头像") + '</em></span></div>' +
     '<div class="avats" id="wbdesk-avatars"></div>' +
     '<input type="file" id="wbdesk-avatar-file" accept="image/png,image/jpeg,image/webp" style="display:none">' +
     "</div>" +
-    '<div class="grp"><span class="grp-t">壁纸</span></div>' +
+    '<div class="grp"><span class="grp-t">' + T("壁纸") + '</span></div>' +
     '<div class="card">' +
-    '<div class="row"><span class="lbl"><b>WorkBuddy 壁纸</b><em>铺在 WorkBuddy 界面底层</em></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("WorkBuddy 壁纸") + '</b><em>' + T("铺在 WorkBuddy 界面底层") + '</em></span></div>' +
     '<div class="seg2 bg-src" id="wbdesk-wall-src">' +
-    '<button data-src="preset">预设壁纸</button><button data-src="custom">自定义壁纸</button>' +
+    '<button data-src="preset">' + T("预设壁纸") + '</button><button data-src="custom">' + T("自定义壁纸") + '</button>' +
     "</div>" +
-    '<div class="walls" id="wbdesk-walls"><div class="tip" style="grid-column:1/-1">壁纸加载中…</div></div>' +
+    '<div class="walls" id="wbdesk-walls"><div class="tip" style="grid-column:1/-1">' + T("壁纸加载中…") + '</div></div>' +
+    '<div class="row" style="align-items:flex-start;flex-direction:column;gap:6px;padding:8px 0 2px">' +
+    '<span class="lbl"><b>' + T("AI 生成壁纸") + '</b><em>' + T("一句话让网关模型画一张 3:1 横幅（左缘留白给界面）") + '</em></span>' +
+    '<div style="display:flex;gap:6px;width:100%">' +
+    '<input id="wbdesk-ai-desc" placeholder="' + T("例：深蓝夜空下的雪山森林，极简扁平风") + '" style="flex:1;margin:0"/>' +
+    '<button id="wbdesk-ai-go" style="flex:none">' + T("生成") + '</button></div>' +
+    '<select id="wbdesk-ai-model" title="' + T("生成所用网关模型") + '"></select>' +
+    "</div>" +
     '<div class="row slider-row">' +
-    '<span class="lbl"><b>背景蒙版</b><em>压暗壁纸保证可读</em></span>' +
+    '<span class="lbl"><b>' + T("背景蒙版") + '</b><em>' + T("压暗壁纸保证可读") + '</em></span>' +
     '<input type="range" id="wbdesk-mask" min="0" max="100" step="1" value="30">' +
     '<span class="slider-val" id="wbdesk-mask-val">30%</span></div>' +
     '<div class="row slider-row">' +
-    '<span class="lbl"><b>背景毛玻璃</b><em>模糊壁纸</em></span>' +
+    '<span class="lbl"><b>' + T("背景毛玻璃") + '</b><em>' + T("模糊壁纸") + '</em></span>' +
     '<input type="range" id="wbdesk-blur" min="0" max="100" step="1" value="0">' +
     '<span class="slider-val" id="wbdesk-blur-val">0%</span></div>' +
-    '<div class="row"><span class="lbl"><b>消息文字阴影</b><em>壁纸下提升消息可读性</em></span>' +
+    '<div class="row"><span class="lbl"><b>' + T("消息文字阴影") + '</b><em>' + T("壁纸下提升消息可读性") + '</em></span>' +
     '<span class="sw" id="wbdesk-tshadow"><i></i></span></div>' +
     '<div class="row" style="padding:8px 0 2px">' +
-    '<button class="ghost" id="wbdesk-wall-reset" style="flex:1">不使用壁纸</button></div>' +
+    '<button class="ghost" id="wbdesk-wall-reset" style="flex:1">' + T("不使用壁纸") + '</button></div>' +
     "</div>" +
     "</div>" +
     /* 模型 Tab */
     '<div class="pane" data-pane="model">' +
-    '<div class="row"><span class="blk-t">网关接入地址</span><button class="ghost" id="wbdesk-models-refresh">刷新</button></div>' +
-    '<div class="gw" id="wbdesk-gw" title="点击复制">—</div>' +
-    '<div class="tip" style="margin:4px 0 8px">OpenAI 兼容端点，点击复制；密钥在桌面端「API 密钥」创建。</div>' +
-    '<div class="row" style="margin:2px 0 4px"><span class="blk-t" style="margin:0">可用模型（<span id="wbdesk-model-count">0</span>）</span></div>' +
-    '<input id="wbdesk-model-search" placeholder="搜索模型 ID…"/>' +
+    '<div class="row"><span class="blk-t">' + T("网关接入地址") + '</span><button class="ghost" id="wbdesk-models-refresh">' + T("刷新") + '</button></div>' +
+    '<div class="gw" id="wbdesk-gw" title="' + T("点击复制") + '">—</div>' +
+    '<div class="tip" style="margin:4px 0 8px">' + T("OpenAI 兼容端点，点击复制；密钥在桌面端「API 密钥」创建。") + '</div>' +
+    '<div class="row" style="margin:2px 0 4px"><span class="blk-t" style="margin:0">' + T("可用模型（") + '<span id="wbdesk-model-count">0</span>' + T("）") + '</span></div>' +
+    '<input id="wbdesk-model-search" placeholder="' + T("搜索模型 ID…") + '"/>' +
     '<div id="wbdesk-models"></div>' +
-    '<div class="tip">点击模型行复制 ID；网关模型供外部工具（Claude Code 等）接入使用。</div>' +
+    '<div class="tip">' + T("点击模型行复制 ID；网关模型供外部工具（Claude Code 等）接入使用。") + '</div>' +
     "</div>" +
     /* 增强 Tab（分组开关参考 WorkDaddy「增强」页） */
     '<div class="pane" data-pane="enh">' +
-    '<div class="grp"><span class="grp-t">免打扰<span class="grp-n" id="wbdesk-dnd-n"></span></span>' +
-    '<button class="ghost" id="wbdesk-dnd-all">全部开</button></div>' +
+    '<div class="grp"><span class="grp-t">' + T("免打扰") + '<span class="grp-n" id="wbdesk-dnd-n"></span></span>' +
+    '<button class="ghost" id="wbdesk-dnd-all">' + T("全部开") + '</button></div>' +
     '<div class="card">' +
-    '<div class="row"><span class="lbl"><b>弹窗自动点允许</b><em>确认弹窗自动允许</em></span><span class="sw" data-enh="dnd"><i></i></span></div>' +
-    '<div class="row"><span class="lbl"><b>沙箱外写文件免确认</b><em>工作区外文件直接写入</em></span><span class="sw" data-enh="file"><i></i></span></div>' +
-    '<div class="row"><span class="lbl"><b>常用命令行免确认</b><em>常用命令直接执行</em></span><span class="sw" data-enh="cmd"><i></i></span></div>' +
-    '<div class="row"><span class="lbl"><b>大批量删除免确认</b><em>批量删除直接进回收站</em></span><span class="sw" data-enh="del"><i></i></span></div>' +
-    '<div class="row"><span class="lbl"><b>系统级工具放行</b><em>系统管理命令直接执行</em></span><span class="sw" data-enh="sys"><i></i></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("弹窗自动点允许") + '</b><em>' + T("确认弹窗自动允许") + '</em></span><span class="sw" data-enh="dnd"><i></i></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("沙箱外写文件免确认") + '</b><em>' + T("工作区外文件直接写入") + '</em></span><span class="sw" data-enh="file"><i></i></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("常用命令行免确认") + '</b><em>' + T("常用命令直接执行") + '</em></span><span class="sw" data-enh="cmd"><i></i></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("大批量删除免确认") + '</b><em>' + T("批量删除直接进回收站") + '</em></span><span class="sw" data-enh="del"><i></i></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("系统级工具放行") + '</b><em>' + T("系统管理命令直接执行") + '</em></span><span class="sw" data-enh="sys"><i></i></span></div>' +
     "</div>" +
-    '<div class="grp"><span class="grp-t">会话</span></div>' +
+    '<div class="grp"><span class="grp-t">' + T("会话") + '</span></div>' +
     '<div class="card">' +
-    '<div class="row"><span class="lbl"><b>继续异常中断会话</b><em>检测到中断自动继续</em></span><span class="sw" data-enh="resume"><i></i></span></div>' +
-    '<div class="row"><span class="lbl"><b>引用消息文本</b><em>选中文字一键插入输入框</em></span><span class="sw" data-enh="quote"><i></i></span></div>' +
-    '<div class="row"><span class="lbl"><b>会话消息索引</b><em>悬浮定位条，点击跳到任意消息</em></span><span class="sw" data-enh="nav"><i></i></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("继续异常中断会话") + '</b><em>' + T("检测到中断自动继续") + '</em></span><span class="sw" data-enh="resume"><i></i></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("会话自动归档") + '</b><em>' + T("空闲超阈值自动归档（阈值在桌面端设置）") + '</em></span><span class="sw" data-enh="arch"><i></i></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("引用消息文本") + '</b><em>' + T("选中文字一键插入输入框") + '</em></span><span class="sw" data-enh="quote"><i></i></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("会话消息索引") + '</b><em>' + T("悬浮定位条，点击跳到任意消息") + '</em></span><span class="sw" data-enh="nav"><i></i></span></div>' +
     "</div>" +
     "</div>" +
     /* 设置 Tab（面板偏好 + 电脑 + 关于） */
     '<div class="pane" data-pane="setting">' +
-    '<div class="grp"><span class="grp-t">面板</span></div>' +
+    '<div class="grp"><span class="grp-t">' + T("面板") + '</span></div>' +
     '<div class="card">' +
-    '<div class="row"><span class="lbl"><b>机器人自动停靠</b><em>闲置 5 秒收进右缘</em></span><span class="sw" id="wbdesk-autodock"><i></i></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("面板语言") + '</b><em>' + T("仅作用于注入面板，与主程序界面无关") + '</em></span>' +
+    '<span class="seg2" id="wbdesk-lang">' +
+    '<button data-lang="auto" title="' + T("跟随主程序（客户端重启后生效）") + '">' + T("自动") + '</button>' +
+    '<button data-lang="zh">中文</button>' +
+    '<button data-lang="en">English</button></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("机器人自动停靠") + '</b><em>' + T("闲置 5 秒收进右缘") + '</em></span><span class="sw" id="wbdesk-autodock"><i></i></span></div>' +
     "</div>" +
-    '<div class="grp"><span class="grp-t">电脑</span></div>' +
+    '<div class="grp"><span class="grp-t">' + T("电脑") + '</span></div>' +
     '<div class="card">' +
-    '<div class="row"><span class="lbl"><b>防休眠</b><em>任务执行期间系统不休眠</em></span><span class="sw" id="wbdesk-awake"><i></i></span></div>' +
+    '<div class="row"><span class="lbl"><b>' + T("防休眠") + '</b><em>' + T("任务执行期间系统不休眠") + '</em></span><span class="sw" id="wbdesk-awake"><i></i></span></div>' +
     "</div>" +
-    '<div class="grp"><span class="grp-t">关于</span></div>' +
+    '<div class="grp"><span class="grp-t">' + T("注入体检") + '</span></div>' +
     '<div class="card">' +
-    '<div class="row"><span class="lbl"><b>BuddyBot 悬浮机器人</b><em>由桌面端注入 · 主题/外观在「主题」Tab</em></span></div>' +
-    '<div class="tip">完整设置（网关 / 定时任务 / 备份 / 更新）请打开桌面端 BuddyBot 控制台。</div>' +
+    '<div class="row"><span class="lbl"><b>' + T("自检与验证") + '</b><em>' + T("CDP / 面板 / 主题 / 原生控件逐项检查") + '</em></span>' +
+    '<span style="display:flex;gap:5px;flex:none">' +
+    '<button class="ghost" id="wbdesk-doctor-run" title="' + T("逐项体检并出报告") + '">' + T("运行体检") + '</button>' +
+    '<button class="ghost" id="wbdesk-verify-run" title="' + T("截取当前客户端画面存档验证生效") + '">' + T("验证截图") + '</button></span></div>' +
+    '<div id="wbdesk-doctor"></div>' +
+    "</div>" +
+    '<div class="grp"><span class="grp-t">' + T("关于") + '</span></div>' +
+    '<div class="card">' +
+    '<div class="row"><span class="lbl"><b>' + T("BuddyBot 悬浮机器人") + '</b><em>' + T("由桌面端注入 · 主题/外观在「主题」Tab") + '</em></span></div>' +
+    '<div class="tip">' + T("完整设置（网关 / 定时任务 / 备份 / 更新）请打开桌面端 BuddyBot 控制台。") + '</div>' +
     "</div>" +
     "</div>" +
     "</div>";
@@ -402,6 +684,7 @@
       p.classList.toggle("on", p.getAttribute("data-pane") === state.tab);
     });
     if (state.tab === "theme") { ensureWalls(); ensurePets(); } // 首次打开主题页时拉取壁纸库与宠物库
+    if (state.tab === "prompts") { ensurePrompts(); } // 首次打开指令页时拉取提效指令库
   });
   setTab("account");
   function setTab(tab) {
@@ -509,8 +792,10 @@
 
   // ---------- 自动停靠：闲置 5 秒收进右缘，指针靠近边缘展开 ----------
   var AUTODOCK_KEY = "wbdesk-autodock";
-  var autoDock = true;
-  try { autoDock = localStorage.getItem(AUTODOCK_KEY) !== "0"; } catch (e) {}
+  // 默认关闭自动停靠：停靠后只露 6px 头部，用户经常找不到机器人。
+  // 仅当用户在面板里显式开启（写入 "1"）后才启用闲置停靠。
+  var autoDock = false;
+  try { autoDock = localStorage.getItem(AUTODOCK_KEY) === "1"; } catch (e) {}
 
   function centerY() {
     var bottom = parseFloat(fab.style.bottom) || EDGE_GAP;
@@ -564,12 +849,20 @@
   });
   panel.querySelector("#wbdesk-refresh").addEventListener("click", function () { send("list", {}); });
   panel.querySelector("#wbdesk-pool-refresh").addEventListener("click", function () { send("pool", {}); });
+  // 一键换号：桌面端自动挑选下一个在线账号走切换流水线（客户端重启后由自动重连恢复面板）
+  panel.querySelector("#wbdesk-switch-next").addEventListener("click", function () {
+    var b = panel.querySelector("#wbdesk-switch-next");
+    b.disabled = true;
+    setTimeout(function () { b.disabled = false; }, 4000); // 切换会重启客户端，防手抖连点即可
+    toast(T("正在挑选在线账号切换，客户端将自动重启…"));
+    send("switch_next", {});
+  });
   // 池账号「设为登录」：直接以该账号重启官方客户端（当前登录自动备份）
   panel.querySelector("#wbdesk-pool").addEventListener("click", function (e) {
     var b = e.target.closest("button[data-login-uid]");
     if (b && !b.disabled) {
       b.disabled = true;
-      b.textContent = "切换中…";
+      b.textContent = T("切换中…");
       send("switch_uid", { uid: b.getAttribute("data-login-uid") });
     }
   });
@@ -579,9 +872,18 @@
     var b = e.target.closest("button[data-acct]");
     if (b) send("switch", { id: b.getAttribute("data-acct") });
   });
+  // 客户端登录账号一键导入：复制发现的明文凭证进账号池（成功后桌面端会重推池与提示条状态）
+  panel.querySelector("#wbdesk-clisess").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-cli-import]");
+    if (b && !b.disabled) {
+      b.disabled = true;
+      b.textContent = T("导入中…");
+      send("client_import", {});
+    }
+  });
 
   // ---------- 面板交互：设置（增强开关，参考 WorkDaddy「增强」页） ----------
-  var ENH_KEYS = ["dnd", "file", "cmd", "del", "sys", "resume", "quote", "nav"];
+  var ENH_KEYS = ["dnd", "file", "cmd", "del", "sys", "resume", "quote", "nav", "arch"];
   var DND_GROUP = ["dnd", "file", "cmd", "del", "sys"];
 
   function setEnh(key, on) {
@@ -595,7 +897,7 @@
     var n = 0;
     DND_GROUP.forEach(function (k) { if (state.enh[k]) n++; });
     var el = panel.querySelector("#wbdesk-dnd-n");
-    if (el) el.textContent = "已开启 " + n + " / " + DND_GROUP.length;
+    if (el) el.textContent = T("已开启") + " " + n + " / " + DND_GROUP.length;
   }
 
   panel.addEventListener("click", function (e) {
@@ -623,6 +925,22 @@
     else undock();
   });
 
+  // ---------- 面板语言开关：选中即存偏好，刷新页面重建面板（全量应用新语言） ----------
+  var langSeg = panel.querySelector("#wbdesk-lang");
+  langSeg.querySelectorAll("button").forEach(function (b) {
+    b.classList.toggle("on", b.getAttribute("data-lang") === LANG);
+  });
+  langSeg.addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-lang]");
+    if (!b) return;
+    var lang = b.getAttribute("data-lang");
+    if (lang === LANG) return;
+    try { localStorage.setItem(LANG_KEY, lang); } catch (e2) {}
+    send("panel_lang", { lang: lang });
+    toast(T("已切换语言，刷新页面生效…"));
+    setTimeout(function () { location.reload(); }, 600);
+  });
+
   // ---------- 面板交互：系统（防休眠，状态由桌面端推送） ----------
   var awakeSw = panel.querySelector("#wbdesk-awake");
   awakeSw.addEventListener("click", function () {
@@ -630,7 +948,7 @@
     state.sys.awake = on;
     awakeSw.classList.toggle("on", on);
     send("awake", { on: on });
-    if (on) toast("已开启防休眠，任务执行期间系统不会休眠");
+    if (on) toast(T("已开启防休眠，任务执行期间系统不会休眠"));
   });
   window.__wbdeskSetSys = function (s) {
     s = s || {};
@@ -660,9 +978,9 @@
     if (!box) return;
     box.innerHTML = THEMES.map(function (t) {
       var on = themeState.id === t.id;
-      return '<button class="theme-opt' + (on ? " on" : "") + '" data-theme-id="' + t.id + '" title="' + t.name + '">' +
+      return '<button class="theme-opt' + (on ? " on" : "") + '" data-theme-id="' + t.id + '" title="' + T(t.name) + '">' +
         '<span class="chip" style="background:linear-gradient(135deg,' + t.c1 + " 0 55%," + t.c2 + " 55% 100%)\"></span>" +
-        '<span class="tname">' + t.name + "</span></button>";
+        '<span class="tname">' + T(t.name) + "</span></button>";
     }).join("");
   }
   panel.querySelector("#wbdesk-themes").addEventListener("click", function (e) {
@@ -736,7 +1054,7 @@
 
   function saveAvatarCustom() {
     try { localStorage.setItem(AVATAR_CUSTOM_KEY, JSON.stringify(avatarCustom)); } catch (e) {
-      toast("头像保存失败，请清理存储空间后重试");
+      toast(T("头像保存失败，请清理存储空间后重试"));
     }
   }
 
@@ -822,20 +1140,20 @@
   function renderAvatars() {
     var box = panel.querySelector("#wbdesk-avatars");
     if (!box) return;
-    var html = '<button class="avat' + (avatarSel.type === "official" ? " on" : "") + '" data-avatar-official="1" title="官方默认">' +
-      '<span class="avatar-off">官方</span></button>';
+    var html = '<button class="avat' + (avatarSel.type === "official" ? " on" : "") + '" data-avatar-official="1" title="' + T("官方默认") + '">' +
+      '<span class="avatar-off">' + T("官方") + '</span></button>';
     html += AVATAR_PRESETS.map(function (p) {
       var on = avatarSel.type === "preset" && avatarSel.id === p.id;
-      return '<button class="avat' + (on ? " on" : "") + '" data-avatar-preset="' + p.id + '" title="' + p.name + '">' +
-        '<img src="' + robotAvatarSVG(p) + '" alt="' + p.name + '"></button>';
+      return '<button class="avat' + (on ? " on" : "") + '" data-avatar-preset="' + p.id + '" title="' + T(p.name) + '">' +
+        '<img src="' + robotAvatarSVG(p) + '" alt="' + T(p.name) + '"></button>';
     }).join("");
     html += avatarCustom.map(function (url, i) {
       var on = avatarSel.type === "custom" && avatarSel.idx === i;
-      return '<button class="avat' + (on ? " on" : "") + '" data-avatar-custom="' + i + '" title="自定义头像">' +
-        '<img src="' + url + '" alt="自定义头像">' +
-        '<span class="avat-del" data-avatar-del="' + i + '" title="删除该头像">✕</span></button>';
+      return '<button class="avat' + (on ? " on" : "") + '" data-avatar-custom="' + i + '" title="' + T("自定义头像") + '">' +
+        '<img src="' + url + '" alt="' + T("自定义头像") + '">' +
+        '<span class="avat-del" data-avatar-del="' + i + '" title="' + T("删除该头像") + '">✕</span></button>';
     }).join("");
-    html += '<button class="avat add" id="wbdesk-avatar-add" title="添加头像">+</button>';
+    html += '<button class="avat add" id="wbdesk-avatar-add" title="' + T("添加头像") + '">+</button>';
     box.innerHTML = html;
   }
 
@@ -873,16 +1191,16 @@
           var cv = document.createElement("canvas");
           cv.width = 96; cv.height = 96;
           cv.getContext("2d").drawImage(img, (img.width - size) / 2, (img.height - size) / 2, size, size, 0, 0, 96, 96);
-          if (avatarCustom.length >= AVATAR_MAX) { toast("自定义头像最多 " + AVATAR_MAX + " 张，请先删除再上传"); return; }
+          if (avatarCustom.length >= AVATAR_MAX) { toast(T("自定义头像最多 %s 张，请先删除再上传", AVATAR_MAX)); return; }
           avatarCustom.push(cv.toDataURL("image/webp", 0.85));
           saveAvatarCustom();
           avatarSel = { type: "custom", idx: avatarCustom.length - 1 };
           applyAvatar();
         } catch (e) {
-          toast("头像图片处理失败");
+          toast(T("头像图片处理失败"));
         }
       };
-      img.onerror = function () { toast("头像图片读取失败"); };
+      img.onerror = function () { toast(T("头像图片读取失败")); };
       img.src = rd.result;
     };
     rd.readAsDataURL(f);
@@ -914,27 +1232,27 @@
             return '<button class="wall' + (on ? " on" : "") + '" data-wall-id="' + w.id + '" title="' + w.name + '">' +
               '<img src="' + w.url + '" alt="' + w.name + '"></button>';
           }).join("")
-        : '<div class="tip" style="grid-column:1/-1">' + (wallsReq ? "暂无内置壁纸" : "壁纸加载中…") + "</div>";
+        : '<div class="tip" style="grid-column:1/-1">' + (wallsReq ? T("暂无内置壁纸") : T("壁纸加载中…")) + "</div>";
       return;
     }
     var customs = walls.filter(function (w) { return w.id.indexOf("custom:") === 0; });
-    var html = '<div class="wall-upload" id="wbdesk-wall-upload" title="点击选择图片，或拖拽到此处">' +
-      "点击或拖拽上传壁纸（PNG / JPG / WebP，保存在本机）</div>";
+    var html = '<div class="wall-upload" id="wbdesk-wall-upload" title="' + T("点击选择图片，或拖拽到此处") + '">' +
+      T("点击或拖拽上传壁纸（PNG / JPG / WebP，保存在本机）") + "</div>";
     html += customs.map(function (w) {
       var on = themeState.wallpaper === w.id;
-      return '<button class="wall' + (on ? " on" : "") + '" data-wall-id="' + w.id + '" title="自定义壁纸">' +
-        '<img src="' + w.url + '" alt="自定义壁纸">' +
-        '<span class="wall-del" data-wall-del="' + w.id + '" title="删除该壁纸">✕</span></button>';
+      return '<button class="wall' + (on ? " on" : "") + '" data-wall-id="' + w.id + '" title="' + T("自定义壁纸") + '">' +
+        '<img src="' + w.url + '" alt="' + T("自定义壁纸") + '">' +
+        '<span class="wall-del" data-wall-del="' + w.id + '" title="' + T("删除该壁纸") + '">✕</span></button>';
     }).join("");
     if (!customs.length) {
-      html += '<div class="tip" style="grid-column:1/-1">还没有自定义壁纸，先上传一张（最多 ' + WALL_MAX + " 张）</div>";
+      html += '<div class="tip" style="grid-column:1/-1">' + T("还没有自定义壁纸，先上传一张（最多 %s 张）", WALL_MAX) + "</div>";
     }
     box.innerHTML = html;
   }
 
   function readWallFile(f) {
     if (!f) return;
-    if (!/^image\/(png|jpe?g|webp)$/i.test(f.type)) { toast("仅支持 PNG / JPG / WebP"); return; }
+    if (!/^image\/(png|jpe?g|webp)$/i.test(f.type)) { toast(T("仅支持 PNG / JPG / WebP")); return; }
     var rd = new FileReader();
     rd.onload = function () {
       var img = new Image();
@@ -947,9 +1265,9 @@
           cv.height = Math.round(img.height * scale);
           cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
           send("wall_add", { dataUrl: cv.toDataURL("image/webp", 0.8) }); // 落盘后桌面端自动应用并回推列表
-        } catch (e) { toast("图片处理失败"); }
+        } catch (e) { toast(T("图片处理失败")); }
       };
-      img.onerror = function () { toast("图片读取失败"); };
+      img.onerror = function () { toast(T("图片读取失败")); };
       img.src = rd.result;
     };
     rd.readAsDataURL(f);
@@ -970,7 +1288,7 @@
       var w = e.target.closest("[data-wall-id]");
       if (w) { send("theme_wall", { wall: w.getAttribute("data-wall-id") }); return; }
       if (e.target.closest("#wbdesk-wall-upload")) {
-        if (customCount() >= WALL_MAX) { toast("自定义壁纸最多 " + WALL_MAX + " 张，请先删除再上传"); return; }
+        if (customCount() >= WALL_MAX) { toast(T("自定义壁纸最多 %s 张，请先删除再上传", WALL_MAX)); return; }
         var inp = panel.querySelector("#wbdesk-wall-file");
         if (inp) inp.click();
       }
@@ -1142,23 +1460,23 @@
   function renderPetGrid() {
     var box = panel.querySelector("#wbdesk-petgrid");
     if (!box) return;
-    var html = '<button class="petopt' + (!state.pet ? " on" : "") + '" data-pet-id="" title="经典机器人">' +
-      '<span class="petoff">经典</span><span class="pname">经典机器人</span></button>';
+    var html = '<button class="petopt' + (!state.pet ? " on" : "") + '" data-pet-id="" title="' + T("经典机器人") + '">' +
+      '<span class="petoff">' + T("经典") + '</span><span class="pname">' + T("经典机器人") + '</span></button>';
     html += pets.map(function (p) {
       var on = state.pet === p.id;
-      var del = p.custom ? '<span class="pet-del" data-pet-del="' + p.id + '" title="删除该宠物">✕</span>' : "";
+      var del = p.custom ? '<span class="pet-del" data-pet-del="' + p.id + '" title="' + T("删除该宠物") + '">✕</span>' : "";
       return '<button class="petopt' + (on ? " on" : "") + '" data-pet-id="' + p.id + '" title="' + p.name + '">' +
         '<img src="' + p.preview + '" alt="' + p.name + '">' + del + '<span class="pname">' + p.name + "</span></button>";
     }).join("");
-    html += '<div class="petopt pet-upload" id="wbdesk-pet-upload" title="选择 Codex 宠物精灵图（spritesheet，8 列布局）">' +
-      '<span class="petoff">＋</span><span class="pname">上传自定义</span></div>';
+    html += '<div class="petopt pet-upload" id="wbdesk-pet-upload" title="' + T("选择 Codex 宠物精灵图（spritesheet，8 列布局）") + '">' +
+      '<span class="petoff">＋</span><span class="pname">' + T("上传自定义") + '</span></div>';
     box.innerHTML = html;
   }
 
   // 自定义宠物上传：读取图片 → 裁第一帧做预览 → 交桌面端落盘并应用
   function uploadPetFile(f) {
     if (!f) return;
-    if (!/^image\/(webp|png|jpeg)$/i.test(f.type)) { toast("仅支持 WebP / PNG / JPG 精灵图"); return; }
+    if (!/^image\/(webp|png|jpeg)$/i.test(f.type)) { toast(T("仅支持 WebP / PNG / JPG 精灵图")); return; }
     var rd = new FileReader();
     rd.onload = function () {
       var img = new Image();
@@ -1166,17 +1484,17 @@
         try {
           var fw = img.naturalWidth / 8;                 // 8 列
           var fh = Math.round(fw * 208 / 192);           // 标准帧高
-          if (fh < 8 || img.naturalHeight < fh) { toast("图片尺寸不像精灵图（需 8 列横排网格）"); return; }
+          if (fh < 8 || img.naturalHeight < fh) { toast(T("图片尺寸不像精灵图（需 8 列横排网格）")); return; }
           var cv = document.createElement("canvas");
           cv.width = Math.round(fw); cv.height = fh;
           cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
           var preview = cv.toDataURL("image/webp", 0.85);
-          var name = (f.name || "").replace(/\.[a-z0-9]+$/i, "") || "自定义宠物";
+          var name = (f.name || "").replace(/\.[a-z0-9]+$/i, "") || T("自定义宠物");
           send("pet_add", { name: name, dataUrl: preview, spriteUrl: rd.result });
-          toast("已添加自定义宠物：" + name);
-        } catch (e) { toast("精灵图处理失败"); }
+          toast(T("已添加自定义宠物：%s", name));
+        } catch (e) { toast(T("精灵图处理失败")); }
       };
-      img.onerror = function () { toast("图片读取失败"); };
+      img.onerror = function () { toast(T("图片读取失败")); };
       img.src = rd.result;
     };
     rd.readAsDataURL(f);
@@ -1274,8 +1592,8 @@
     if (!url) return;
     copyText(url);
     var gw = panel.querySelector("#wbdesk-gw");
-    gw.title = "已复制 ✓";
-    setTimeout(function () { gw.title = "点击复制"; }, 1200);
+    gw.title = T("已复制 ✓");
+    setTimeout(function () { gw.title = T("点击复制"); }, 1200);
   });
 
   function copyText(text) {
@@ -1306,14 +1624,29 @@
           return '<div class="acct"><span title="' + a.uid + '" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(a.name) +
             ' <span class="tip">' + escapeHtml(a.time || "") + "</span></span>" +
             '<span style="display:flex;gap:5px;flex:none">' +
-            '<button class="ghost" data-del="' + escapeHtml(a.id) + '" title="删除该备份">删</button>' +
-            '<button data-acct="' + escapeHtml(a.id) + '">切换</button></span></div>';
+            '<button class="ghost" data-del="' + escapeHtml(a.id) + '" title="' + T("删除该备份") + '">' + T("删") + '</button>' +
+            '<button data-acct="' + escapeHtml(a.id) + '">' + T("切换") + '</button></span></div>';
         }).join("")
-      : '<div class="tip">暂无备份。提示：要切号可直接用上方池账号的「设为登录」，无需先备份。</div>';
+      : '<div class="tip">' + T("暂无备份。提示：要切号可直接用上方池账号的「设为登录」，无需先备份。") + '</div>';
   };
   window.__wbdeskSetEnh = function (e) {
     e = e || {};
     ENH_KEYS.forEach(function (k) { setEnh(k, !!e[k]); });
+  };
+
+  // 官方客户端当前登录账号探测（桌面端按需推送）：可导入时显示一键导入提示条
+  window.__wbdeskSetClientSession = function (s) {
+    s = s || {};
+    state.clisess = s;
+    var box = panel.querySelector("#wbdesk-clisess");
+    if (!s.detected || s.inPool) { box.style.display = "none"; box.innerHTML = ""; return; }
+    var name = s.nickname || s.uid || T("未命名账号");
+    box.style.display = "block";
+    box.innerHTML = s.hasCred
+      ? '<div class="acct" style="border-color:#22c55e;background:rgba(34,197,94,.08)">' +
+        '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + T("检测到官方客户端已登录 <b>%s</b>，发现可用凭证", escapeHtml(name)) + '</span>' +
+        '<button data-cli-import="1" style="flex:none">' + T("一键导入") + '</button></div>'
+      : '<div class="tip">' + T("官方客户端已登录 %s，未发现可导入的明文凭证（客户端 token 为加密形态），可在桌面端「账号管理 → 接入账号」扫码授权。", escapeHtml(name)) + '</div>';
   };
 
   window.__wbdeskSetPool = function (list) {
@@ -1327,16 +1660,16 @@
           var cur = !!a.current;
           return '<div class="acct" style="' + (exp ? "border-color:#f59e0b;background:rgba(245,158,11,.08);" : "") + '">' +
             '<span title="' + escapeHtml(a.uid || "") + '" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
-            (cur ? '<span class="badge ok" style="margin-right:4px">当前</span>' : "") +
-            escapeHtml(a.name || "账号") +
-            (exp ? ' <span style="color:#fbbf24;font-weight:600">⚠ 72h 内到期 ' + a.creditsExpiring + "</span>" : "") +
+            (cur ? '<span class="badge ok" style="margin-right:4px">' + T("当前") + '</span>' : "") +
+            escapeHtml(a.name || T("未命名账号")) +
+            (exp ? ' <span style="color:#fbbf24;font-weight:600">' + T("⚠ 72h 内到期 %s", a.creditsExpiring) + "</span>" : "") +
             "</span>" +
             '<span style="display:flex;align-items:center;gap:6px;flex:none">' +
-            '<b>' + (a.creditsKnown ? a.credits.toLocaleString() + " 分" : "—") + "</b>" +
-            (cur ? "" : '<button class="ghost" data-login-uid="' + escapeHtml(a.uid || "") + '">设为登录</button>') +
+            '<b>' + (a.creditsKnown ? a.credits.toLocaleString() + T(" 分") : "—") + "</b>" +
+            (cur ? "" : '<button class="ghost" data-login-uid="' + escapeHtml(a.uid || "") + '">' + T("设为登录") + '</button>') +
             "</span></div>";
         }).join("")
-      : '<div class="tip">账号池暂无账号（桌面端「深度刷新」后显示）</div>';
+      : '<div class="tip">' + T("账号池暂无账号（桌面端「深度刷新」后显示）") + '</div>';
     // 有临期积分时机器人头顶亮徽标
     var badge = document.getElementById("wbdesk-fab-badge");
     if (badge) badge.classList.toggle("show", expiring);
@@ -1355,10 +1688,10 @@
       var isBusy = busy.indexOf(t) >= 0;
       var done = todayRun(history, t);
       var badge = isBusy
-        ? '<span class="badge busy">执行中…</span>'
-        : (done ? '<span class="badge ok" title="' + escapeHtml(done.startedAt) + ' 已成功执行">✓ ' + escapeHtml(done.time) + "</span>" : "");
-      return '<div class="row" style="padding:5px 0"><span>' + TASK_LABEL[t] + " " + badge + "</span>" +
-        '<button data-task="' + t + '"' + (isBusy ? " disabled" : "") + ">" + (isBusy ? "执行中" : "执行") + "</button></div>";
+        ? '<span class="badge busy">' + T("执行中…") + '</span>'
+        : (done ? '<span class="badge ok" title="' + escapeHtml(done.startedAt) + " " + T("已成功执行") + '">✓ ' + escapeHtml(done.time) + "</span>" : "");
+      return '<div class="row" style="padding:5px 0"><span>' + T(TASK_LABEL[t]) + " " + badge + "</span>" +
+        '<button data-task="' + t + '"' + (isBusy ? " disabled" : "") + ">" + (isBusy ? T("执行中") : T("执行")) + "</button></div>";
     }).join("");
 
     // 最近运行列表
@@ -1366,12 +1699,12 @@
     hbox.innerHTML = history.length
       ? history.map(function (r) {
           var cls = r.failed > 0 ? "fail" : (r.success > 0 ? "ok" : "dim");
-          var txt = r.failed > 0 ? "失败 " + r.failed : (r.success > 0 ? "成功 " + r.success : "跳过 " + r.skipped);
+          var txt = r.failed > 0 ? T("失败") + " " + r.failed : (r.success > 0 ? T("成功") + " " + r.success : T("跳过") + " " + r.skipped);
           return '<div class="row" style="padding:3px 0"><span>' +
-            (TASK_LABEL[r.type] || r.type) + ' <span class="tip">' + escapeHtml(shortTime(r.startedAt)) +
+            T(TASK_LABEL[r.type] || r.type) + ' <span class="tip">' + escapeHtml(shortTime(r.startedAt)) +
             "</span></span><span class=\"badge " + cls + "\">" + txt + "</span></div>";
         }).join("")
-      : '<div class="tip">暂无运行记录</div>';
+      : '<div class="tip">' + T("暂无运行记录") + '</div>';
   };
 
   // 今天内 success>0 的最近一次运行（口径与桌面端任务中心一致）
@@ -1399,6 +1732,7 @@
     state.models = view || { url: "", models: [] };
     panel.querySelector("#wbdesk-gw").textContent = state.models.url || "—";
     renderModels();
+    renderAIModels();
   };
 
   function renderModels() {
@@ -1411,21 +1745,170 @@
     box.innerHTML = models.length
       ? models.slice(0, 80).map(function (m) {
           var stat = m.requests > 0
-            ? '<span class="tip">' + m.requests + " 次 · " + fmtTokens(m.tokens) + "</span>"
-            : '<span class="tip">' + (m.observed ? "仅观测" : "未使用") + "</span>";
-          return '<div class="row acct" data-mid="' + escapeHtml(m.id) + '" title="点击复制模型 ID" style="cursor:pointer;padding:5px 8px">' +
+            ? '<span class="tip">' + m.requests + T(" 次") + " · " + fmtTokens(m.tokens) + "</span>"
+            : '<span class="tip">' + (m.observed ? T("仅观测") : T("未使用")) + "</span>";
+          return '<div class="row acct" data-mid="' + escapeHtml(m.id) + '" title="' + T("点击复制模型 ID") + '" style="cursor:pointer;padding:5px 8px">' +
             '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(m.id) + "</span>" + stat + "</div>";
         }).join("") +
-        (models.length > 80 ? '<div class="tip" style="text-align:center">仅显示前 80 个，共 ' + models.length + " 个</div>" : "")
-      : '<div class="tip">' + (kw ? "无匹配模型" : "暂无模型（桌面端定时刷新或保活后同步）") + "</div>";
+        (models.length > 80 ? '<div class="tip" style="text-align:center">' + T("仅显示前 80 个，共") + " " + models.length + '</div>' : "")
+      : '<div class="tip">' + (kw ? T("无匹配模型") : T("暂无模型（桌面端定时刷新或保活后同步）")) + "</div>";
   }
   panel.querySelector("#wbdesk-model-search").addEventListener("input", renderModels);
   panel.querySelector("#wbdesk-models").addEventListener("click", function (e) {
     var row = e.target.closest("[data-mid]");
     if (!row) return;
     copyText(row.getAttribute("data-mid"));
-    toast("已复制模型 ID：" + row.getAttribute("data-mid"));
+    toast(T("已复制模型 ID：%s", row.getAttribute("data-mid")));
   });
+
+  // ---------- 面板交互：指令（提效指令库，点击直填输入框） ----------
+  var PROMPT_CATS = {
+    "deep-research": "深度研究", "data-analysis": "数据分析", "doc-writing": "文档写作",
+    "ppt": "演示文稿", "meeting": "会议沟通", "email-calendar": "邮件日程",
+    "project-mgmt": "项目管理", "dev": "研发技术", "growth": "增长运营", "admin-hr-finance": "行政人事财务",
+  };
+  var prompts = [];       // 桌面端推送的指令库 [{id,title,category,scene,prompt}]
+  var promptsReq = false; // 本轮注入是否已请求过指令库
+
+  function ensurePrompts() {
+    if (promptsReq) return;
+    promptsReq = true;
+    send("prompts", {});
+  }
+  window.__wbdeskSetPrompts = function (list) {
+    prompts = list || [];
+    var cnt = panel.querySelector("#wbdesk-prompt-count");
+    if (cnt) cnt.textContent = String(prompts.length);
+    renderPrompts();
+  };
+
+  function renderPrompts() {
+    var box = panel.querySelector("#wbdesk-prompt-list");
+    if (!box) return;
+    var kw = "";
+    try { kw = (panel.querySelector("#wbdesk-prompt-search").value || "").trim().toLowerCase(); } catch (e) {}
+    var list = kw ? prompts.filter(function (p) {
+      return (p.title + " " + p.scene + " " + p.prompt + " " + T(PROMPT_CATS[p.category] || "")).toLowerCase().indexOf(kw) >= 0;
+    }) : prompts;
+    box.innerHTML = list.length
+      ? list.slice(0, 60).map(function (p) {
+          var cat = T(PROMPT_CATS[p.category] || "") || p.category || T("未分类");
+          return '<div class="prow" data-prompt-id="' + p.id + '" title="' + T("点击填入输入框") + '">' +
+            '<div class="pt"><span class="badge dim" style="margin-right:5px">' + escapeHtml(cat) + "</span>" + escapeHtml(p.title) + "</div>" +
+            '<div class="ps">' + escapeHtml(p.scene || p.prompt.slice(0, 60)) + "</div></div>";
+        }).join("") +
+        (list.length > 60 ? '<div class="tip" style="text-align:center">' + T("仅显示前 60 条，共") + " " + list.length + '</div>' : "")
+      : '<div class="tip">' + (kw ? T("无匹配指令") : (promptsReq ? T("指令库为空") : T("指令加载中…"))) + "</div>";
+  }
+  panel.querySelector("#wbdesk-prompt-search").addEventListener("input", renderPrompts);
+  panel.querySelector("#wbdesk-prompt-list").addEventListener("click", function (e) {
+    var row = e.target.closest("[data-prompt-id]");
+    if (!row) return;
+    var id = parseInt(row.getAttribute("data-prompt-id"), 10);
+    for (var i = 0; i < prompts.length; i++) {
+      if (prompts[i].id === id) {
+        if (insertChatText(prompts[i].prompt)) {
+          setOpen(false); // 填入后面板收起，直接看输入框
+          toast(T("已填入对话输入框：%s", prompts[i].title));
+        } else {
+          toast(T("未找到对话输入框（请先进入会话页面）"));
+        }
+        return;
+      }
+    }
+  });
+
+  // 把整段指令写入对话输入框。
+  // WorkBuddy 输入框是 Slate 编辑器，前端合成事件改的只是 DOM（无法发送、剪切/删除错乱），
+  // 必须交给桌面端走 CDP Input.insertText 受信任输入（chatinput.go），这里只负责发指令。
+  function insertChatText(text) {
+    if (!text) return false;
+    send("insert_text", { text: text });
+    return true;
+  }
+
+  // ---------- 面板交互：AI 生成壁纸（一句话 → 网关模型画 SVG 横幅 → 栅格化入壁纸库） ----------
+  var aiBusy = false;
+
+  function renderAIModels() {
+    var sel = panel.querySelector("#wbdesk-ai-model");
+    if (!sel) return;
+    var all = (state.models && state.models.models) || [];
+    var cur = sel.value;
+    sel.innerHTML = all.length
+      ? all.slice(0, 100).map(function (m) { return '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.id) + "</option>"; }).join("")
+      : '<option value="">' + T("（网关模型未就绪）") + '</option>';
+    if (cur && all.some(function (m) { return m.id === cur; })) sel.value = cur;
+  }
+
+  panel.querySelector("#wbdesk-ai-go").addEventListener("click", function () {
+    if (aiBusy) return;
+    var desc = (panel.querySelector("#wbdesk-ai-desc").value || "").trim();
+    if (!desc) { toast(T("先描述一下想要的壁纸，例如：深蓝夜空雪山森林")); return; }
+    var model = panel.querySelector("#wbdesk-ai-model").value;
+    if (!model) { toast(T("网关模型未就绪，请确认网关已启动且模型已同步")); return; }
+    aiBusy = true;
+    var b = panel.querySelector("#wbdesk-ai-go");
+    b.disabled = true;
+    b.textContent = T("生成中…");
+    toast(T("正在让模型画壁纸，约需几十秒…"));
+    send("wall_ai", { desc: desc, model: model });
+  });
+
+  // 桌面端回推 AI 生成结果：SVG 在面板里栅格化为 webp，复用 wall_add 落盘并自动应用
+  window.__wbdeskAIWall = function (svg, errMsg) {
+    aiBusy = false;
+    var b = panel.querySelector("#wbdesk-ai-go");
+    if (b) { b.disabled = false; b.textContent = T("生成"); }
+    if (errMsg) { toast(T("AI 生成失败：%s", errMsg)); return; }
+    if (!svg) return;
+    var img = new Image();
+    img.onload = function () {
+      try {
+        var w = img.naturalWidth || 1500, h = img.naturalHeight || 500;
+        var scale = Math.min(1, 1600 / Math.max(w, h));
+        var cv = document.createElement("canvas");
+        cv.width = Math.round(w * scale); cv.height = Math.round(h * scale);
+        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+        wallSrcView = "custom"; // 生成结果进自定义视图，回推列表后直接可见
+        send("wall_add", { dataUrl: cv.toDataURL("image/webp", 0.8) });
+        toast(T("AI 壁纸已生成并应用 ✓"));
+      } catch (e) { toast(T("AI 壁纸栅格化失败：%s", e && e.message || e)); }
+    };
+    img.onerror = function () { toast(T("AI 壁纸渲染失败（SVG 无效）")); };
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  };
+
+  // ---------- 面板交互：注入体检 + 验证截图（设置 Tab） ----------
+  panel.querySelector("#wbdesk-doctor-run").addEventListener("click", function () {
+    var box = panel.querySelector("#wbdesk-doctor");
+    if (box) box.innerHTML = '<div class="tip">' + T("体检中…") + '</div>';
+    send("doctor", {});
+  });
+  panel.querySelector("#wbdesk-verify-run").addEventListener("click", function () { send("verify", {}); });
+  window.__wbdeskDoctorReport = function (list) {
+    var box = panel.querySelector("#wbdesk-doctor");
+    if (!box) return;
+    var allOk = true;
+    box.innerHTML = (list || []).map(function (c) {
+      if (!c.ok) allOk = false;
+      return '<div class="doc-row"><span style="flex:none"><span class="badge ' + (c.ok ? "ok" : "fail") + '">' +
+        (c.ok ? T("正常") : T("异常")) + "</span></span>" +
+        '<span style="min-width:0"><b style="font-weight:600">' + escapeHtml(c.name) + "</b>" +
+        '<div class="dd">' + escapeHtml(c.detail || "") + "</div></span></div>";
+    }).join("") || '<div class="tip">' + T("未收到体检报告") + '</div>';
+    if (list && list.length) toast(allOk ? T("注入体检全部通过 ✓") : T("体检发现异常项，见详情"));
+  };
+
+  // ---------- FAB 运行徽标（在线账号数 + 今日 Token，桌面端注入后/每分钟推送） ----------
+  window.__wbdeskSetBadge = function (v) {
+    var el = document.getElementById("wbdesk-fab-stat");
+    if (!el) return;
+    v = v || {};
+    if (!v.total) { el.classList.remove("show"); return; }
+    el.innerHTML = "<b>" + v.online + "</b>/" + v.total + " " + T("在线") + " · " + T("今日") + " " + fmtTokens(v.tokens || 0);
+    el.classList.add("show");
+  };
 
   // ---------- 面板内 toast ----------
   var toastEl = null, toastTimer = null;
@@ -1689,7 +2172,7 @@
     if (quotePill) return quotePill;
     quotePill = document.createElement("button");
     quotePill.id = "wbdesk-quote";
-    quotePill.textContent = "引用";
+    quotePill.textContent = T("引用");
     quotePill.addEventListener("mousedown", function (e) { e.preventDefault(); }); // 保住选区
     quotePill.addEventListener("click", function () {
       insertQuote();
@@ -1721,31 +2204,10 @@
     pill.style.top = (rect.top < 42 ? rect.bottom + 8 : rect.top - 34) + "px";
   }
 
-  function findChatInput() {
-    var list = document.querySelectorAll('textarea,[contenteditable="true"]');
-    for (var i = 0; i < list.length; i++) {
-      var el = list[i];
-      if (!visible(el) || panel.contains(el)) continue;
-      if (el.getBoundingClientRect().top > window.innerHeight * 0.3) return el; // 输入框一般在下半屏
-    }
-    return list.length ? list[0] : null;
-  }
-
   function insertQuote() {
-    var el = findChatInput();
-    if (!el || !lastQuoteText) return;
+    if (!lastQuoteText) return;
     var quoted = "> " + lastQuoteText.split("\n").join("\n> ").slice(0, 2000) + "\n";
-    if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
-      var proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      var setter = Object.getOwnPropertyDescriptor(proto, "value").set; // 绕过 React 覆写的 value
-      setter.call(el, (el.value ? el.value.replace(/\n$/, "") + "\n" : "") + quoted);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.focus();
-      try { el.selectionStart = el.selectionEnd = el.value.length; } catch (e) {}
-    } else {
-      el.focus();
-      try { document.execCommand("insertText", false, quoted); } catch (e) {}
-    }
+    insertChatText(quoted); // 与指令直填同一通道（CDP 受信任输入）
   }
 
   document.addEventListener("selectionchange", function () {
@@ -1765,6 +2227,7 @@
     delete window.__wbdeskSetAccounts;
     delete window.__wbdeskSetEnh;
     delete window.__wbdeskSetPool;
+    delete window.__wbdeskSetClientSession;
     delete window.__wbdeskSetTasks;
     delete window.__wbdeskSetModels;
     delete window.__wbdeskSetWalls;
@@ -1772,8 +2235,15 @@
     delete window.__wbdeskSetPet;
     delete window.__wbdeskSetPets;
     delete window.__wbdeskSetSys;
+    delete window.__wbdeskSetPrompts;
+    delete window.__wbdeskSetBadge;
+    delete window.__wbdeskAIWall;
+    delete window.__wbdeskDoctorReport;
     delete window.__wbdeskToast;
   };
 
   wake(); // 首次注入启动闲置计时
+
+  // 上报面板语言偏好（自动模式报空），桌面端 toast/体检等推送文案随之双语
+  send("panel_lang", { lang: LANG === "auto" ? "" : LANG });
 })();

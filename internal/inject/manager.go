@@ -45,6 +45,14 @@ type AccountBackup struct {
 type Manager struct {
 	svc *core.Service
 
+	// promptsJSON 提效指令库数据（main.go 从 frontend/src/data/prompts.json
+	// 内嵌传入，单一数据源：桌面端「提效指令库」页与注入面板共用）
+	promptsJSON []byte
+
+	// locale 注入面板语言（zh/en）：默认从客户端 URL ?locale= 识别（仅窗口创建
+	// 时注入，实时切语言不更新）；面板「面板语言」开关上报后以此为准
+	locale string
+
 	mu      sync.Mutex
 	conn    *cdpConn
 	port    int
@@ -52,9 +60,9 @@ type Manager struct {
 	started time.Time
 }
 
-// NewManager 创建注入管理器
-func NewManager(svc *core.Service) *Manager {
-	return &Manager{svc: svc}
+// NewManager 创建注入管理器（promptsJSON 可为空，面板「指令」Tab 降级为空态）
+func NewManager(svc *core.Service, promptsJSON []byte) *Manager {
+	return &Manager{svc: svc, promptsJSON: promptsJSON}
 }
 
 // StartSupervisor 启动自动重连守护：
@@ -95,6 +103,7 @@ func (m *Manager) StartSupervisor() {
 					if conn != nil {
 						pool, _ := json.Marshal(m.poolSummary())
 						_, _ = conn.evaluate(`window.__wbdeskSetPool && window.__wbdeskSetPool(`+string(pool)+`)`, 5*time.Second)
+						m.pushPanelBadge(conn)
 						lastPush = time.Now()
 					}
 				}
@@ -112,6 +121,31 @@ func (m *Manager) StartSupervisor() {
 
 // ctx CDP 连接的根上下文（当前无应用级取消源，用 Background）
 func (m *Manager) ctx() context.Context { return context.Background() }
+
+// localeOf 从客户端页面 URL 提取语言：?locale=en-US → en，其余（含缺省）→ zh。
+// 注意：主进程只在窗口创建时把 locale 写进 URL，运行中实时切语言不刷新页面，
+// 该值不随之更新；面板语言以「面板语言」开关的 panel_lang 上报为准。
+func localeOf(rawURL string) string {
+	i := strings.Index(rawURL, "locale=")
+	if i >= 0 {
+		v := rawURL[i+len("locale="):]
+		if j := strings.IndexByte(v, '&'); j >= 0 {
+			v = v[:j]
+		}
+		if strings.HasPrefix(strings.ToLower(v), "en") {
+			return "en"
+		}
+	}
+	return "zh"
+}
+
+// tt 注入面板文案双语：面板语言为英文时返回 en 文案，否则 zh。
+func (m *Manager) tt(zh, en string) string {
+	if m.locale == "en" {
+		return en
+	}
+	return zh
+}
 
 // Start 启动注入：确保客户端带 CDP 运行 → 附着主窗口 → 注入面板
 func (m *Manager) Start() error {
@@ -162,6 +196,7 @@ func (m *Manager) Start() error {
 	if err != nil {
 		return err
 	}
+	m.locale = localeOf(target.URL)
 	conn, err := dialCDP(m.ctx(), port, target.ID, m.onBinding)
 	if err != nil {
 		return err
@@ -253,11 +288,19 @@ func panelExpr() string {
 		`"), function(c){return c.charCodeAt(0)})))`
 }
 
-// onBinding 面板动作回传（读循环 goroutine，动作放后台执行避免阻塞读循环）
+// onBinding 面板动作回传（读循环 goroutine 调用）：动作放后台执行，绝不阻塞读循环。
+// 关键：面板构建完成时会同步 send("panel_lang")，若在这里同步 m.mu.Lock()，
+// 而 Start() 注入面板期间持有 m.mu，读循环会被卡死，evaluate 应答无法路由，
+// 最终 Start 超时 → conn.close() 等读循环退出 → 死锁（UI 永久转圈）。
 func (m *Manager) onBinding(name, payload string) {
 	if name != bindingName() {
 		return
 	}
+	go m.handleBinding(payload)
+}
+
+// handleBinding 真正的面板动作分发（独立 goroutine，与读循环解耦）
+func (m *Manager) handleBinding(payload string) {
 	var p struct {
 		Action string `json:"action"`
 		On     bool   `json:"on"`
@@ -272,6 +315,9 @@ func (m *Manager) onBinding(name, payload string) {
 		Blur   *int   `json:"blur"`
 		Data   string `json:"dataUrl"`
 		Sprite string `json:"spriteUrl"` // pet_add：自定义宠物精灵图 dataURL
+		Desc   string `json:"desc"`      // wall_ai：AI 生成壁纸的一句话描述
+		Model  string `json:"model"`     // wall_ai：面板选定的网关模型
+		Lang   string `json:"lang"`      // panel_lang：面板语言偏好（""=自动跟随客户端）
 	}
 	if json.Unmarshal([]byte(payload), &p) != nil {
 		return
@@ -280,6 +326,11 @@ func (m *Manager) onBinding(name, payload string) {
 	case "dnd":
 		_ = m.svc.UpdateInjectConfig(func(c *core.InjectConfig) { c.DNDAutoConfirm = p.On })
 	case "enh":
+		// 会话自动归档：配置在 Schedule.SessionArchive（非注入设置），单独落盘
+		if p.Key == "arch" {
+			_ = m.svc.UpdateSessionArchiveConfig(func(c *core.SessionArchiveConfig) { c.Enabled = p.On })
+			return
+		}
 		// 增强开关（白名单键，防止任意写配置）
 		_ = m.svc.UpdateInjectConfig(func(c *core.InjectConfig) {
 			switch p.Key {
@@ -303,7 +354,7 @@ func (m *Manager) onBinding(name, payload string) {
 		})
 	case "backup":
 		if _, err := m.Backup(p.Name); err != nil {
-			m.reportError("备份登录态失败", err)
+			m.reportError(m.tt("备份登录态失败", "Failed to back up login"), err)
 		} else {
 			m.refreshPanelAccounts()
 		}
@@ -311,21 +362,61 @@ func (m *Manager) onBinding(name, payload string) {
 		m.refreshPanelAccounts()
 	case "pool":
 		m.refreshPanelPool()
+	case "client_import":
+		// 面板「检测到官方客户端已登录」提示条的一键导入：复制发现的明文凭证进 auth_dir
+		go func() {
+			sess := m.svc.DetectClientSession()
+			file, err := m.svc.ImportClientSession()
+			if err != nil {
+				m.reportError(m.tt("导入客户端登录账号失败", "Failed to import client login"), err)
+				return
+			}
+			m.svc.Store().Audit("account.import_client_session", sess.UID, "from="+sess.CredFile)
+			core.EmitEvent(core.EventAccountStatus, map[string]any{
+				"uid": sess.UID, "status": "imported", "credential": file,
+			})
+			// 导入成功：面板内提示 + 重推池/会话（账号已在池中，提示条会自动消失）
+			m.mu.Lock()
+			conn := m.conn
+			m.mu.Unlock()
+			name := sess.Nickname
+			if name == "" {
+				name = sess.UID
+			}
+			if conn != nil {
+				raw, _ := json.Marshal(fmt.Sprintf(m.tt("已导入 %s 到账号池", "Imported %s into the account pool"), name))
+				_, _ = conn.evaluate(`window.__wbdeskToast && window.__wbdeskToast(`+string(raw)+`)`, 3*time.Second)
+			}
+			m.refreshPanelAccounts()
+		}()
 	case "switch":
 		if err := m.Switch(p.ID); err != nil {
 			// 页面会 reload，重连由用户重新点击「启动注入」触发（或后续自动重连）
-			m.reportError("切换账号失败", err)
+			m.reportError(m.tt("切换账号失败", "Failed to switch account"), err)
 		}
 	case "switch_uid":
 		// 面板直接切换登录账号：走客户端切换流水线（备份→退出→写入→重启），进度在桌面端可见
 		go func() {
 			if err := m.svc.ClientSwitchAccount(p.UID); err != nil {
-				m.reportError("切换登录账号失败", err)
+				m.reportError(m.tt("切换登录账号失败", "Failed to switch login account"), err)
 			}
 		}()
+	case "switch_next":
+		// 面板一键换号：自动挑选下一个在线账号切换（客户端会重启，连接随之断开）
+		go m.switchNextAccount()
+	case "insert_text":
+		// 把指令/引用文本写入对话输入框（Slate 编辑器必须走 CDP 受信任输入，见 chatinput.go）
+		go func() {
+			if err := m.insertChatText(p.Text); err != nil {
+				m.reportError(m.tt("填入输入框失败", "Failed to fill into input box"), err)
+			}
+		}()
+	case "prompts":
+		// 面板「指令」Tab 请求提效指令库（按需推送一次）
+		go m.pushPanelPromptsConn()
 	case "del_backup":
 		if err := m.Delete(p.ID); err != nil {
-			m.reportError("删除备份失败", err)
+			m.reportError(m.tt("删除备份失败", "Failed to delete backup"), err)
 		} else {
 			m.refreshPanelAccounts()
 		}
@@ -347,7 +438,7 @@ func (m *Manager) onBinding(name, payload string) {
 		// 切换悬浮机器人皮肤（"" = 经典 CSS 机器人）
 		go func() {
 			if err := m.ApplyPet(p.ID); err != nil {
-				m.reportError("切换宠物失败", err)
+				m.reportError(m.tt("切换宠物失败", "Failed to switch pet"), err)
 			}
 		}()
 	case "pet_add":
@@ -355,11 +446,11 @@ func (m *Manager) onBinding(name, payload string) {
 		go func() {
 			id, err := m.AddCustomPet(p.Name, p.Data, p.Sprite)
 			if err != nil {
-				m.reportError("添加自定义宠物失败", err)
+				m.reportError(m.tt("添加自定义宠物失败", "Failed to add custom pet"), err)
 				return
 			}
 			if err := m.ApplyPet(id); err != nil {
-				m.reportError("应用自定义宠物失败", err)
+				m.reportError(m.tt("应用自定义宠物失败", "Failed to apply custom pet"), err)
 			}
 			m.pushPanelPets()
 		}()
@@ -367,7 +458,7 @@ func (m *Manager) onBinding(name, payload string) {
 		// 删除自定义宠物；若正在使用则重置为经典机器人
 		go func() {
 			if err := m.DeleteCustomPet(p.ID); err != nil {
-				m.reportError("删除自定义宠物失败", err)
+				m.reportError(m.tt("删除自定义宠物失败", "Failed to delete custom pet"), err)
 				return
 			}
 			m.pushPanelPets()
@@ -392,7 +483,7 @@ func (m *Manager) onBinding(name, payload string) {
 			th := m.svc.GetConfig().Inject.Theme
 			th.ID = p.ID
 			if err := m.ApplyTheme(th); err != nil {
-				m.reportError("应用主题失败", err)
+				m.reportError(m.tt("应用主题失败", "Failed to apply theme"), err)
 			}
 		}()
 	case "theme_wall":
@@ -401,7 +492,7 @@ func (m *Manager) onBinding(name, payload string) {
 			th := m.svc.GetConfig().Inject.Theme
 			th.Wallpaper = p.Wall
 			if err := m.ApplyTheme(th); err != nil {
-				m.reportError("应用壁纸失败", err)
+				m.reportError(m.tt("应用壁纸失败", "Failed to apply wallpaper"), err)
 			}
 		}()
 	case "theme_cfg":
@@ -416,7 +507,7 @@ func (m *Manager) onBinding(name, payload string) {
 			}
 			th.TextShadow = p.On
 			if err := m.ApplyTheme(th); err != nil {
-				m.reportError("主题设置失败", err)
+				m.reportError(m.tt("主题设置失败", "Failed to update theme"), err)
 			}
 		}()
 	case "wall_add":
@@ -429,7 +520,7 @@ func (m *Manager) onBinding(name, payload string) {
 				err = m.ApplyTheme(th)
 			}
 			if err != nil {
-				m.reportError("添加壁纸失败", err)
+				m.reportError(m.tt("添加壁纸失败", "Failed to add wallpaper"), err)
 			}
 			m.pushPanelWalls()
 		}()
@@ -443,15 +534,27 @@ func (m *Manager) onBinding(name, payload string) {
 				_ = m.ApplyTheme(th)
 			}
 			if err := m.deleteCustomWallpaper(name); err != nil {
-				m.reportError("删除壁纸失败", err)
+				m.reportError(m.tt("删除壁纸失败", "Failed to delete wallpaper"), err)
 			}
 			m.pushPanelWalls()
 		}()
+	case "panel_lang":
+		// 面板语言偏好上报（面板构建时与切换时都会发）：""=自动跟随客户端 locale
+		switch p.Lang {
+		case "en", "zh":
+			m.mu.Lock()
+			m.locale = p.Lang
+			m.mu.Unlock()
+		case "":
+			m.mu.Lock()
+			m.locale = localeOf(m.target.URL)
+			m.mu.Unlock()
+		}
 	case "awake":
 		// 面板防休眠开关
 		go func() {
 			if err := m.svc.SetAwake(p.On); err != nil {
-				m.reportError("防休眠设置失败", err)
+				m.reportError(m.tt("防休眠设置失败", "Failed to set keep-awake"), err)
 			}
 			m.mu.Lock()
 			conn := m.conn
@@ -460,6 +563,15 @@ func (m *Manager) onBinding(name, payload string) {
 				m.pushPanelSys(conn)
 			}
 		}()
+	case "doctor":
+		// 面板「注入体检」：CDP/面板/主题/原生控件逐项自检，结果回推面板展示
+		go m.runPanelDoctor()
+	case "verify":
+		// 面板「验证截图」：CDP captureScreenshot 存档并在面板提示路径
+		go m.runPanelVerify()
+	case "wall_ai":
+		// 面板「AI 生成壁纸」：一句话描述 → 本机网关对话模型产出 SVG banner
+		go m.handleWallAI(p.Desc, p.Model)
 	case "dnd_clicked":
 		core.EmitEvent(core.EventInjectStatus, map[string]any{"kind": "dnd_click", "text": p.Text})
 	case "enh_clicked":
@@ -644,15 +756,19 @@ type panelEnhView struct {
 	Resume bool `json:"resume"`
 	Quote  bool `json:"quote"`
 	Nav    bool `json:"nav"`
+	// Arch 会话自动归档（配置在 Schedule.SessionArchive，与注入设置同面板展示）
+	Arch bool `json:"arch"`
 }
 
 // pushPanelState 注入/刷新后把配置与账号列表同步给面板
 func (m *Manager) pushPanelState(conn *cdpConn) error {
-	c := m.svc.GetConfig().Inject
+	c := m.svc.GetConfig()
+	inj := c.Inject
 	enh, _ := json.Marshal(panelEnhView{
-		Dnd: c.DNDAutoConfirm, File: c.AllowFileWrite, Cmd: c.AllowCommands,
-		Del: c.AllowBatchDelete, Sys: c.AllowSystemTools,
-		Resume: c.AutoResumeSession, Quote: c.QuoteMessage, Nav: c.MessageNav,
+		Dnd: inj.DNDAutoConfirm, File: inj.AllowFileWrite, Cmd: inj.AllowCommands,
+		Del: inj.AllowBatchDelete, Sys: inj.AllowSystemTools,
+		Resume: inj.AutoResumeSession, Quote: inj.QuoteMessage, Nav: inj.MessageNav,
+		Arch: c.Schedule.SessionArchive.Enabled,
 	})
 	accs, _ := m.List()
 	raw, _ := json.Marshal(accs)
@@ -671,6 +787,8 @@ func (m *Manager) pushPanelState(conn *cdpConn) error {
 	m.pushPanelSys(conn)
 	m.pushPanelTheme(conn)
 	m.pushPanelPet(conn)
+	m.pushPanelBadge(conn)
+	m.pushPanelClientSession(conn)
 	return nil
 }
 
@@ -710,6 +828,26 @@ func (m *Manager) poolSummary() []poolAccountView {
 	return out
 }
 
+// panelClientSessionView 注入面板「检测到官方客户端已登录」提示条视图
+type panelClientSessionView struct {
+	Detected bool   `json:"detected"`         // 登录位存在且能读到 uid
+	UID      string `json:"uid,omitempty"`    // 当前登录账号 uid
+	Nickname string `json:"nickname"`         // 昵称（取自已发现的凭证，可能为空）
+	HasCred  bool   `json:"hasCred"`          // 发现目录里找到同 uid 明文凭证（可一键导入）
+	InPool   bool   `json:"inPool"`           // 该 uid 已在账号池（无需导入）
+}
+
+// pushPanelClientSession 推送客户端登录会话探测结果（只读磁盘，成本低）
+func (m *Manager) pushPanelClientSession(conn *cdpConn) {
+	sess := m.svc.DetectClientSession()
+	v := panelClientSessionView{
+		Detected: sess.Detected, UID: sess.UID, Nickname: sess.Nickname,
+		HasCred: sess.CredFile != "", InPool: sess.InPool,
+	}
+	raw, _ := json.Marshal(v)
+	_, _ = conn.evaluate(`window.__wbdeskSetClientSession && window.__wbdeskSetClientSession(`+string(raw)+`)`, 5*time.Second)
+}
+
 // refreshPanelPool 面板请求刷新账号池余额
 func (m *Manager) refreshPanelPool() {
 	m.mu.Lock()
@@ -720,6 +858,7 @@ func (m *Manager) refreshPanelPool() {
 	}
 	pool, _ := json.Marshal(m.poolSummary())
 	_, _ = conn.evaluate(`window.__wbdeskSetPool && window.__wbdeskSetPool(`+string(pool)+`)`, 5*time.Second)
+	m.pushPanelClientSession(conn)
 }
 
 // refreshPanelAccounts 面板主动刷新账号列表
@@ -729,6 +868,40 @@ func (m *Manager) refreshPanelAccounts() {
 	m.mu.Unlock()
 	if conn != nil {
 		_ = m.pushPanelState(conn)
+	}
+}
+
+// switchNextAccount 面板「一键换号」：从账号池挑下一个在线账号（当前登录除外，
+// 已知积分高者优先），走客户端切换流水线。客户端会重启，CDP 连接随之断开，
+// 由 StartSupervisor 自动重连恢复面板。
+func (m *Manager) switchNextAccount() {
+	currentUID := ""
+	if authFile, err := core.OfficialClientAuthFile(); err == nil {
+		if raw, rerr := os.ReadFile(authFile); rerr == nil {
+			if cred, perr := core.ParseCredential(authFile, raw); perr == nil && cred != nil {
+				currentUID = cred.UID
+			}
+		}
+	}
+	cands := []core.Account{}
+	for _, a := range m.svc.Accounts() {
+		if a.Status != "online" || a.UID == "" || a.UID == currentUID {
+			continue
+		}
+		cands = append(cands, a)
+	}
+	if len(cands) == 0 {
+		m.reportError(m.tt("一键换号失败", "Quick switch failed"), fmt.Errorf("%s", m.tt("没有其他在线账号可切换", "no other online account to switch to")))
+		return
+	}
+	pick := cands[0]
+	for _, a := range cands[1:] { // 已知积分高者优先，未知积分不参与比较
+		if a.CreditsKnown && a.Credits > pick.Credits {
+			pick = a
+		}
+	}
+	if err := m.svc.ClientSwitchAccount(pick.UID); err != nil {
+		m.reportError(m.tt("一键换号失败", "Quick switch failed"), err)
 	}
 }
 

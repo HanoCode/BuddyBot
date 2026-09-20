@@ -177,6 +177,7 @@ func (s *Stats) Dashboard(days int) Dashboard {
 // 因此下钻链路为「密钥（调用方）→ 会话 → 请求」，不做任何推测性归属。
 type SessionStat struct {
 	SessionID    string `json:"sessionId"`
+	Title        string `json:"title"` // 会话标题（本机会话日志回填；与本机 session UUID 匹配才有值）
 	KeyName      string `json:"keyName"`
 	FirstTS      int64  `json:"firstTs"`
 	LastTS       int64  `json:"lastTs"`
@@ -188,13 +189,14 @@ type SessionStat struct {
 	Errors       int    `json:"errors"`
 }
 
-// SessionDrilldown 会话下钻结果：缓存命中率 KPI + 会话聚合列表。
+// SessionDrilldown 会话下钻结果：缓存命中率 KPI + 会话聚合列表（全量，按 token 降序；
+// 前端负责搜索过滤，日志上限 2000 条，会话数远小于该值，无需分页）。
 type SessionDrilldown struct {
 	Days         int           `json:"days"`
 	InputTokens  int           `json:"inputTokens"`  // 窗口内输入侧总量（含缓存命中部分）
 	CacheTokens  int           `json:"cacheTokens"`  // 窗口内缓存命中 token
 	CacheHitRate float64       `json:"cacheHitRate"` // 缓存命中率 %（cache / input × 100；无输入为 0）
-	Sessions     []SessionStat `json:"sessions"`     // 按 token 降序，Top 20
+	Sessions     []SessionStat `json:"sessions"`     // 按 token 降序
 }
 
 // SessionDrilldown 会话下钻聚合：窗口内按 session_id 聚合出会话 Top（含缓存
@@ -204,6 +206,7 @@ func (s *Stats) SessionDrilldown(days int) SessionDrilldown {
 	in := filterRequestLogs(s.store.ListRequestLogs(), r)
 	d := SessionDrilldown{Days: days}
 	m := map[string]*SessionStat{}
+	titles := ClientSessionTitles() // 本机会话标题（5 分钟缓存；查不到回退展示 session_id）
 	for _, l := range in {
 		inputTotal := l.InputTokens + l.CacheTokens
 		d.InputTokens += inputTotal
@@ -213,7 +216,7 @@ func (s *Stats) SessionDrilldown(days int) SessionDrilldown {
 		}
 		sess := m[l.SessionID]
 		if sess == nil {
-			sess = &SessionStat{SessionID: l.SessionID, KeyName: l.KeyName, FirstTS: l.TS, LastTS: l.TS}
+			sess = &SessionStat{SessionID: l.SessionID, Title: titles[l.SessionID], KeyName: l.KeyName, FirstTS: l.TS, LastTS: l.TS}
 			m[l.SessionID] = sess
 		}
 		sess.Requests++
@@ -238,9 +241,6 @@ func (s *Stats) SessionDrilldown(days int) SessionDrilldown {
 		d.Sessions = append(d.Sessions, *sess)
 	}
 	sort.Slice(d.Sessions, func(i, j int) bool { return d.Sessions[i].Tokens > d.Sessions[j].Tokens })
-	if len(d.Sessions) > 20 {
-		d.Sessions = d.Sessions[:20]
-	}
 	return d
 }
 

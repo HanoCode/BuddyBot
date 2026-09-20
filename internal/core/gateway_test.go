@@ -360,6 +360,45 @@ func TestGatewayNoAccountReturns503(t *testing.T) {
 	}
 }
 
+// 会话归属：请求体 session_id 缺失时回退 X-Session-Id header；body 恒优先于 header。
+// 借空账号池的 503 错误路径校验日志里的 session 归属（无需上游）。
+func TestGatewaySessionIDHeaderFallback(t *testing.T) {
+	svc := newTestService(t)
+	base := startTestGateway(t, svc)
+
+	post := func(bodySession, headerSession string) {
+		t.Helper()
+		body := `{"model":"glm-5.2","messages":[{"role":"user","content":"hi"}]}`
+		if bodySession != "" {
+			body = `{"model":"glm-5.2","session_id":"` + bodySession + `","messages":[{"role":"user","content":"hi"}]}`
+		}
+		req, _ := http.NewRequest(http.MethodPost, base+"/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+svc.GetConfig().APIKey)
+		if headerSession != "" {
+			req.Header.Set("X-Session-Id", headerSession)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("请求失败: %v", err)
+		}
+		res.Body.Close()
+	}
+
+	post("", "sess-hdr")    // 仅 header → 兜底生效
+	post("sess-body", "")   // 仅 body
+	post("sess-both", "x")  // body + header → body 优先
+
+	logs := svc.Store().ListRequestLogs() // 最新在前
+	if len(logs) != 3 {
+		t.Fatalf("日志条数 = %d, want 3", len(logs))
+	}
+	for i, want := range []string{"sess-both", "sess-body", "sess-hdr"} {
+		if logs[i].SessionID != want {
+			t.Fatalf("日志[%d].SessionID = %q, want %q", i, logs[i].SessionID, want)
+		}
+	}
+}
+
 func TestGatewaySuccessChargesAccountAndKey(t *testing.T) {
 	svc := newTestService(t)
 	seedCredential(t, svc.AuthDir(), "u_ok", 30*24*time.Hour)

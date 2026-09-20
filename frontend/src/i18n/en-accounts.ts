@@ -231,4 +231,12 @@ export const en: Record<string, string> = {
   "已过期": "Expired",
   "{d} 天 {h} 小时": "{d}d {h}h",
   "{h} 小时 {m} 分": "{h}h {m}m",
+
+  // ===== 客户端登录自动发现（ClientSession 提示条） =====
+  "检测到官方客户端已登录 {name}": "Official client logged in as {name}",
+  "发现可用凭证 {file}，可一键导入账号池（复制凭证文件，不影响客户端登录）": "Found usable credential {file}; import it into the pool in one click (copies the credential file, client login unaffected)",
+  "官方登录位中的登录凭证为客户端加密形态，无法直接提取；可通过「接入账号」扫码授权同账号加入账号池": "Credentials in the official login slot are client-encrypted and cannot be extracted; sign in the same account via \"Add Account\" to join the pool",
+  "一键导入": "Import",
+  "已导入客户端登录账号": "Client login account imported",
+  "导入失败": "Import failed",
 };

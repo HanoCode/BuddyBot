@@ -2,10 +2,22 @@
 #
 # 产物命名与 internal/api/system.go pickUpdateAsset 的匹配规则对应：
 #   BuddyBot-darwin-arm64.zip            macOS .app 包（应用内自动更新）
-#   BuddyBot-windows-amd64.exe           Windows 便携 exe（应用内自动更新）
+#   BuddyBot-windows-amd64.exe           Windows 便携 exe（应用内自动更新，SignPath 签名）
 #   checksums.txt                        全部产物的 sha256（下载后强校验）
 #
 # 版本号唯一来源 = git tag，经 APP_VERSION → ldflags 注入 internal/api.appVersion。
+#
+# Windows 代码签名（SignPath Foundation，开源项目免费）：
+#   前置条件（一次性，见 SignPath 控制台）：
+#     1. 仓库必须有 LICENSE（OSI 认可许可证）→ https://signpath.org/apply 申请
+#     2. 安装 SignPath GitHub App 并授权本仓库
+#     3. SignPath 控制台添加 GitHub.com 为 Trusted Build System
+#   所需 GitHub 配置（Settings → Secrets and variables → Actions）：
+#     Secret   SIGNPATH_API_TOKEN            SignPath API Token（Submitter 权限）
+#     Variable SIGNPATH_ORGANIZATION_ID      组织 ID（UUID）
+#     Variable SIGNPATH_PROJECT_SLUG         项目 slug
+#     Variable SIGNPATH_SIGNING_POLICY_SLUG  签名策略 slug（如 release-signing）
+#   未配置 secrets 时签名步骤自动跳过，照常发布未签名 exe（不影响现有流程）。
 name: Release
 
 on:
@@ -17,6 +29,8 @@ permissions:
 
 jobs:
   build:
+    env:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -55,6 +69,37 @@ jobs:
         run: |
           wails3 task windows:build APP_VERSION=${{ env.VERSION }}
           Copy-Item bin/BuddyBot.exe bin/BuddyBot-windows-amd64.exe
+
+      # 上传未签名 exe 供 SignPath 拉取（SignPath Action 只接受 GitHub artifact 输入）
+      - name: Upload unsigned Windows exe
+        id: upload-unsigned-exe
+        if: matrix.goos == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe-unsigned
+          path: bin/BuddyBot-windows-amd64.exe
+          if-no-files-found: error
+
+      - name: Sign Windows exe (SignPath)
+        if: matrix.goos == 'windows' && env.SIGNPATH_API_TOKEN != ''
+        uses: SignPath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-exe.outputs.artifact-id }}
+          output-artifact-directory: signed
+          wait-for-completion-timeout-in-seconds: "1200"
+
+      - name: Replace exe with signed one
+        if: matrix.goos == 'windows' && env.SIGNPATH_API_TOKEN != ''
+        shell: pwsh
+        run: |
+          $signed = Get-ChildItem signed -Filter *.exe -Recurse | Select-Object -First 1
+          if (-not $signed) { throw "No signed exe found in signed/" }
+          Copy-Item $signed.FullName bin/BuddyBot-windows-amd64.exe -Force
+          Write-Host "Replaced with signed exe: $($signed.FullName)"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

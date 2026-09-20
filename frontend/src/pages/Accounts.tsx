@@ -10,7 +10,7 @@ import { broadcastRefresh, errText, useAsync } from "../hooks/useAsync";
 import { EVENT, onEvent } from "../services/events";
 import { confirmDialog, promptDialog, toast } from "../components/common/Feedback";
 import { EmptyRow, ErrorBlock, SkeletonRows } from "../components/common/StateBlock";
-import type { Account, AccountListResult, AccountQuery, AccountStatus, TaskRun, TaskRunDetail, TaskType } from "../types";
+import type { Account, AccountListResult, AccountQuery, AccountStatus, ClientSession, TaskRun, TaskRunDetail, TaskType } from "../types";
 import { useT, t } from "../i18n";
 
 // 后端 status 字段是自由字符串，这里按已知取值映射，未知取值兜底为 unknown
@@ -90,6 +90,9 @@ export default function Accounts() {
   const [taskDetail, setTaskDetail] = useState<TaskRunDetail | null>(null);
   const [taskDetailType, setTaskDetailType] = useState<string>("");
   const [importing, setImporting] = useState(false);
+  // 官方客户端当前登录账号探测（账号管理顶部提示条）：登录位 uid + 发现目录可用凭证
+  const [clientSess, setClientSess] = useState<ClientSession | null>(null);
+  const [sessImporting, setSessImporting] = useState(false);
   const [taskCenter, setTaskCenter] = useState(false);
   // 任务中心实时进度（对齐 panel 队列的逐项可见性）：task:progress 事件驱动
   const [prog, setProg] = useState<null | { type: string; index: number; total: number }>(null);
@@ -687,6 +690,41 @@ export default function Accounts() {
     });
     return off;
   }, []);
+
+  // 官方客户端当前登录账号探测：挂载 + 账号池变化（导入/扫码/删除都会广播 accountStatus）时刷新
+  const refreshClientSess = useCallback(async () => {
+    try {
+      setClientSess(await accountsApi.clientSession());
+    } catch {
+      setClientSess(null); // 探测失败静默（提示条是增值信息，不值得报错打扰）
+    }
+  }, []);
+  useEffect(() => {
+    void refreshClientSess();
+    const off = onEvent(EVENT.accountStatus, () => void refreshClientSess());
+    return off;
+  }, [refreshClientSess]);
+
+  // 一键导入客户端当前登录账号（复制发现的明文凭证进 auth_dir，不动原文件）
+  const importClientSess = async () => {
+    if (!clientSess?.credFile) return;
+    setSessImporting(true);
+    try {
+      const res = await accountsApi.importClientSession();
+      toast.success(
+        t("已导入客户端登录账号"),
+        `${clientSess.nickname || clientSess.uid} → ${(res.files ?? []).join("、")}`,
+      );
+      await load();
+      await refreshClientSess();
+    } catch (e) {
+      toast.error(t("导入失败"), errText(e));
+      // 导入失败（如凭证已失效）也刷新一次，让提示条反映最新状态
+      await refreshClientSess();
+    } finally {
+      setSessImporting(false);
+    }
+  };
   // 打开详情弹窗时若从未查询过余额，自动触发一次（effect 只随 uid 变化重跑，无回环）。
   const detailUid = detail?.uid;
   useEffect(() => {
@@ -735,6 +773,36 @@ export default function Accounts() {
           >＋ {t("接入账号")}</button>
         </div>
       </div>
+
+      {/* 客户端登录自动发现：官方客户端已登录但账号池没有该账号时提示（uid 来自官方登录位明文字段） */}
+      {clientSess?.detected && !clientSess.inPool && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className="card-h">
+            <div>
+              <h3>
+                <MonitorSmartphone size={14} strokeWidth={2} style={{ verticalAlign: "-2px", marginRight: 6 }} />
+                {t("检测到官方客户端已登录 {name}", { name: clientSess.nickname || clientSess.uid || "" })}
+              </h3>
+              <div className="sub">
+                {clientSess.credFile
+                  ? t("发现可用凭证 {file}，可一键导入账号池（复制凭证文件，不影响客户端登录）", { file: clientSess.credName ?? "" })
+                  : t("官方登录位中的登录凭证为客户端加密形态，无法直接提取；可通过「接入账号」扫码授权同账号加入账号池")}
+              </div>
+            </div>
+            {clientSess.credFile && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span className={`badge ${clientSess.realm === "global" ? "b-blue" : "b-green"}`}>
+                  <span className="d" />{clientSess.realm === "global" ? t("国际版") : t("国内版")}
+                </span>
+                <button className="btn btn-soft" disabled={sessImporting} onClick={() => void importClientSess()}>
+                  {sessImporting ? <Loader2 size={13} className="spin" /> : <Download size={13} strokeWidth={2} />}
+                  {t("一键导入")}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {list.error && <ErrorBlock message={list.error} onRetry={() => void load()} />}
 

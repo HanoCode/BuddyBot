@@ -103,6 +103,40 @@ func workbuddyModelsPath() string {
 	return filepath.Join(agentHome(), ".workbuddy", "models.json")
 }
 
+func zcodeConfigPath() string {
+	return filepath.Join(agentEnvDir("ZCODE_HOME", ".zcode"), "v2", "config.json")
+}
+
+func qwenSettingsPath() string {
+	return filepath.Join(agentEnvDir("QWEN_CONFIG_DIR", ".qwen"), "settings.json")
+}
+
+func minimaxConfigPath() string {
+	if v := strings.TrimSpace(os.Getenv("MINIMAX_DATA_DIR")); v != "" {
+		return filepath.Join(v, "config.yaml")
+	}
+	return filepath.Join(agentHome(), ".minimax", "config.yaml")
+}
+
+func crushConfigPath() string {
+	return filepath.Join(agentEnvDir("CRUSH_HOME", filepath.Join(".config", "crush")), "crush.json")
+}
+
+func aiderConfigPath() string {
+	if v := strings.TrimSpace(os.Getenv("AIDER_CONFIG")); v != "" {
+		return v
+	}
+	return filepath.Join(agentHome(), ".aider.conf.yml")
+}
+
+func zedSettingsPath() string {
+	return filepath.Join(agentEnvDir("ZED_CONFIG_DIR", filepath.Join(".config", "zed")), "settings.json")
+}
+
+func continueConfigPath() string {
+	return filepath.Join(agentEnvDir("CONTINUE_CONFIG_DIR", ".continue"), "config.yaml")
+}
+
 // ---- 探测 ----
 
 // DetectAgents 探测全部支持的客户端
@@ -115,6 +149,13 @@ func DetectAgents(baseURL, apiKey string) []AgentTarget {
 		{id: "kimi-code", name: "Kimi Code", path: kimiCodeConfigPath()},
 		{id: "codebuddy", name: "CodeBuddy", path: codebuddyModelsPath()},
 		{id: "workbuddy", name: "WorkBuddy", path: workbuddyModelsPath()},
+		{id: "zcode", name: "ZCode", path: zcodeConfigPath()},
+		{id: "qwen", name: "Qwen Code", path: qwenSettingsPath()},
+		{id: "minimax", name: "MiniMax Code", path: minimaxConfigPath()},
+		{id: "crush", name: "Crush", path: crushConfigPath()},
+		{id: "aider", name: "Aider", path: aiderConfigPath()},
+		{id: "zed", name: "Zed", path: zedSettingsPath()},
+		{id: "continue", name: "Continue", path: continueConfigPath()},
 	}
 	out := make([]AgentTarget, 0, len(targets))
 	for _, t := range targets {
@@ -179,6 +220,20 @@ func ApplyAgent(id, baseURL, apiKey string, models []string, backupRoot string) 
 		files = []string{codebuddyModelsPath()}
 	case "workbuddy":
 		files = []string{workbuddyModelsPath()}
+	case "zcode":
+		files = []string{zcodeConfigPath()}
+	case "qwen":
+		files = []string{qwenSettingsPath()}
+	case "minimax":
+		files = []string{minimaxConfigPath()}
+	case "crush":
+		files = []string{crushConfigPath()}
+	case "aider":
+		files = []string{aiderConfigPath()}
+	case "zed":
+		files = []string{zedSettingsPath()}
+	case "continue":
+		files = []string{continueConfigPath()}
 	default:
 		return nil, fmt.Errorf("不支持的客户端: %s", id)
 	}
@@ -295,6 +350,157 @@ func ApplyAgent(id, baseURL, apiKey string, models []string, backupRoot string) 
 		}
 		if err := atomicWriteFile(files[0], out); err != nil {
 			return nil, fmt.Errorf("写入 Kimi Code 配置失败: %w", err)
+		}
+	case "zcode":
+		// ZCode 桌面版自定义 provider（kind=openai-compatible，Chat Completions）。
+		// 注意：ZCode 运行时会把内存注册表写回本文件，运行期间的外部编辑会被丢弃，
+		// 前端提示里已要求先退出 ZCode 再接入。
+		if err := writeAgentJSON(files[0], func(root map[string]any) {
+			provider, _ := root["provider"].(map[string]any)
+			if provider == nil {
+				provider = map[string]any{}
+			}
+			modelsMap := map[string]any{}
+			for _, m := range models {
+				modelsMap[m] = map[string]any{
+					"limit": map[string]any{"context": 200000, "output": 32768},
+				}
+			}
+			provider[agentProviderID] = map[string]any{
+				"name": agentProviderName,
+				"kind": "openai-compatible",
+				"options": map[string]any{
+					"apiKey":         apiKey,
+					"baseURL":        baseURL + "/v1",
+					"apiKeyRequired": true,
+				},
+				"source": "custom",
+				"models": modelsMap,
+			}
+			root["provider"] = provider
+		}); err != nil {
+			return nil, fmt.Errorf("写入 ZCode 配置失败: %w", err)
+		}
+	case "qwen":
+		// Qwen Code：modelProviders.openai[] 追加条目，key 走 env 字段（settings.json 内优先级最低但可用）
+		if err := writeAgentJSON(files[0], func(root map[string]any) {
+			envKey := "WORKBUDDY_GATEWAY_API_KEY"
+			env, _ := root["env"].(map[string]any)
+			if env == nil {
+				env = map[string]any{}
+			}
+			env[envKey] = apiKey
+			root["env"] = env
+
+			mp, _ := root["modelProviders"].(map[string]any)
+			if mp == nil {
+				mp = map[string]any{}
+			}
+			list, _ := mp["openai"].([]any)
+			kept := make([]any, 0, len(list)+len(models))
+			for _, item := range list {
+				if m, ok := item.(map[string]any); ok {
+					if v, _ := m["envKey"].(string); v == envKey {
+						continue // 清掉自家旧条目，其它条目原样保留
+					}
+				}
+				kept = append(kept, item)
+			}
+			for _, m := range models {
+				kept = append(kept, map[string]any{
+					"id": m, "name": agentProviderName + " " + m,
+					"baseUrl": baseURL + "/v1", "envKey": envKey,
+				})
+			}
+			mp["openai"] = kept
+			root["modelProviders"] = mp
+
+			sec, _ := root["security"].(map[string]any)
+			if sec == nil {
+				sec = map[string]any{}
+			}
+			auth, _ := sec["auth"].(map[string]any)
+			if auth == nil {
+				auth = map[string]any{}
+			}
+			auth["selectedType"] = "openai"
+			sec["auth"] = auth
+			root["security"] = sec
+
+			modelCfg, _ := root["model"].(map[string]any)
+			if modelCfg == nil {
+				modelCfg = map[string]any{}
+			}
+			modelCfg["name"] = models[0]
+			root["model"] = modelCfg
+		}); err != nil {
+			return nil, fmt.Errorf("写入 Qwen Code 配置失败: %w", err)
+		}
+	case "minimax":
+		// MiniMax Code（mcode）：config.yaml 的 provider map，同 opencode 的 @ai-sdk 家族
+		if err := upsertYAMLProviderEntry(files[0], baseURL, apiKey, models); err != nil {
+			return nil, fmt.Errorf("写入 MiniMax 配置失败: %w", err)
+		}
+	case "crush":
+		if err := writeAgentJSON(files[0], func(root map[string]any) {
+			provider, _ := root["provider"].(map[string]any)
+			if provider == nil {
+				provider = map[string]any{}
+			}
+			list := make([]map[string]any, 0, len(models))
+			for _, m := range models {
+				list = append(list, map[string]any{"id": m, "name": m})
+			}
+			provider[agentProviderID] = map[string]any{
+				"type":     "openai",
+				"base_url": baseURL + "/v1",
+				"api_key":  apiKey,
+				"models":   list,
+			}
+			root["provider"] = provider
+		}); err != nil {
+			return nil, fmt.Errorf("写入 Crush 配置失败: %w", err)
+		}
+	case "aider":
+		// Aider：扁平 YAML，model 走 openai/ 前缀 + openai-api-base / openai-api-key
+		cfg := setYAMLFlat(readAgentFile(files[0]), "model", fmt.Sprintf("%q", "openai/"+models[0]))
+		cfg = setYAMLFlat(cfg, "openai-api-base", fmt.Sprintf("%q", baseURL+"/v1"))
+		cfg = setYAMLFlat(cfg, "openai-api-key", fmt.Sprintf("%q", apiKey))
+		if err := atomicWriteFile(files[0], cfg); err != nil {
+			return nil, fmt.Errorf("写入 Aider 配置失败: %w", err)
+		}
+	case "zed":
+		// Zed：language_models.openai_compatible.<provider>，api_url 指向网关
+		if err := writeAgentJSON(files[0], func(root map[string]any) {
+			lm, _ := root["language_models"].(map[string]any)
+			if lm == nil {
+				lm = map[string]any{}
+			}
+			oc, _ := lm["openai_compatible"].(map[string]any)
+			if oc == nil {
+				oc = map[string]any{}
+			}
+			list := make([]map[string]any, 0, len(models))
+			for _, m := range models {
+				list = append(list, map[string]any{
+					"name": m, "display_name": m,
+					"max_tokens": 128000, "max_output_tokens": 32768,
+				})
+			}
+			oc[agentProviderName] = map[string]any{
+				"api_url":          baseURL + "/v1",
+				"api_key":          apiKey,
+				"available_models": list,
+			}
+			lm["openai_compatible"] = oc
+			root["language_models"] = lm
+		}); err != nil {
+			return nil, fmt.Errorf("写入 Zed 配置失败: %w", err)
+		}
+	case "continue":
+		// Continue：config.yaml 的 models[] 追加条目（apiBase 指向网关）
+		if err := upsertContinueModels(files[0], baseURL, apiKey, models); err != nil {
+			return nil, fmt.Errorf("写入 Continue 配置失败: %w", err)
 		}
 	case "codebuddy", "workbuddy":
 		// 自定义模型清单：{"models":[...]} 或裸数组。只增删 vendor=WorkBuddy 的条目，

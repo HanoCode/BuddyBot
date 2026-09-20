@@ -18,6 +18,15 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as core$0 from "../core/models.js";
 
 /**
+ * ClientTokenStats WorkBuddy 客户端自身 token 消耗：扫描本机会话日志（JSONL）
+ * 聚合真实 usage（输入/输出/缓存读写，带 5 分钟缓存；force=true 强制重扫）。
+ * 目录缺失的档位（国内/国际版）如实标注 missing，不做任何兜底填充。
+ */
+export function ClientTokenStats(days: number, force: boolean): $CancellablePromise<core$0.ClientTokenStats | null> {
+    return $Call.ByID(4085244696, days, force);
+}
+
+/**
  * Dashboard 返回近 days 天的整页统计（总览 + 逐日 + 按模型 + 按密钥 + 时段 + 任务）
  */
 export function Dashboard(days: number): $CancellablePromise<core$0.Dashboard | null> {

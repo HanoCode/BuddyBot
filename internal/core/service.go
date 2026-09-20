@@ -34,6 +34,9 @@ type ScheduleConfig struct {
 	// Refresh 定时刷新：按固定间隔自动刷新需要手工刷新的内容
 	//（账号积分余额 + 模型目录），把「查余额 / 深度刷新」交给调度器定时做。
 	Refresh RefreshConfig `json:"refresh"`
+	// SessionArchive 会话自动归档：把官方客户端中空闲超过阈值的已结束会话
+	// 标记为 archived（巡检间隔固定 30 分钟，与积分到期巡检一致）。
+	SessionArchive SessionArchiveConfig `json:"session_archive"`
 	// Notify 推送通知（对齐 workbuddy2api notify.*）
 	Notify NotifyConfig `json:"notify"`
 }
@@ -146,6 +149,10 @@ type Config struct {
 	Listen        string         `json:"listen"`
 	APIKey        string         `json:"api_key"`
 	AuthDir       string         `json:"auth_dir"`
+	// ClientAuthDirs 客户端登录凭证发现目录：官方客户端当前登录账号的明文凭证
+	// （workbuddy2api 系工具 OAuth 登录落盘的 workbuddy-*.json）搜索路径，
+	// 供账号管理「自动获取登录信息 → 一键导入」使用；支持 ~/ 前缀，可配多个。
+	ClientAuthDirs []string      `json:"client_auth_dirs,omitempty"`
 	StateFile     string         `json:"state_file"`
 	Schedule      ScheduleConfig `json:"schedule"`
 	Pool          PoolConfig     `json:"pool"`
@@ -233,6 +240,8 @@ func DefaultConfig() *Config {
 		Listen:    ":7863",
 		APIKey:    generateAPIKey(),
 		AuthDir:   "./auths",
+		// 默认发现目录：本机 workbuddy2api 系工具的凭证落盘位置（可在 config.json 改）
+		ClientAuthDirs: []string{"~/code/workbuddy-api/workbuddy-desktop/auths"},
 		StateFile: "./data/state.json",
 		Schedule: ScheduleConfig{
 			CheckinHours:     []int{9, 21},
@@ -413,6 +422,14 @@ func (s *Service) UpdateInjectConfig(mutate func(*InjectConfig)) error {
 	return nil
 }
 
+// UpdateSessionArchiveConfig 局部更新会话自动归档配置（落盘；
+// 调度器每个巡检周期读取最新配置，无需重启）
+func (s *Service) UpdateSessionArchiveConfig(mutate func(*SessionArchiveConfig)) error {
+	cfg := s.GetConfig()
+	mutate(&cfg.Schedule.SessionArchive)
+	return s.SaveConfigWith(cfg)
+}
+
 // MirrorSetBind 写会话粘性绑定到可选镜像（未启用时 Noop）
 func (s *Service) MirrorSetBind(sessionID, uid string) { s.mirror.SetBind(sessionID, uid) }
 
@@ -511,6 +528,9 @@ func (s *Service) LoadConfig() error {
 	// 用户显式关闭时 interval_minutes 会保留原值，不会被此处覆盖
 	if cfg.Schedule.Refresh.IntervalMinutes == 0 && !cfg.Schedule.Refresh.Enabled {
 		cfg.Schedule.Refresh = RefreshConfig{Enabled: true, IntervalMinutes: DefaultRefreshIntervalMinutes}
+	}
+	if cfg.Schedule.SessionArchive.IdleDays <= 0 {
+		cfg.Schedule.SessionArchive.IdleDays = DefaultSessionArchiveIdleDays
 	}
 	if cfg.Prompt.Mode == "" {
 		cfg.Prompt.Mode = "passthrough"

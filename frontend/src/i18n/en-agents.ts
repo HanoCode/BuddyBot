@@ -17,6 +17,20 @@ export const en: Record<string, string> = {
     "Writes a vendor=WorkBuddy custom model entry into ~/.codebuddy/models.json (other models kept as-is)",
   "在 ~/.workbuddy/models.json 写入 vendor=WorkBuddy 的自定义模型条目（其余模型原样保留）":
     "Writes a vendor=WorkBuddy custom model entry into ~/.workbuddy/models.json (other models kept as-is)",
+  "在 ~/.zcode/v2/config.json 写入 provider.workbuddy（需先退出 ZCode，运行中的 ZCode 会在退出时覆盖本文件）":
+    "Writes provider.workbuddy to ~/.zcode/v2/config.json (quit ZCode first; a running ZCode overwrites this file on exit)",
+  "在 ~/.qwen/settings.json 写入 modelProviders.openai 与 WORKBUDDY_GATEWAY_API_KEY":
+    "Writes modelProviders.openai and WORKBUDDY_GATEWAY_API_KEY to ~/.qwen/settings.json",
+  "在 ~/.minimax/config.yaml 写入 provider.workbuddy（@ai-sdk/openai-compatible）":
+    "Writes provider.workbuddy to ~/.minimax/config.yaml (@ai-sdk/openai-compatible)",
+  "在 ~/.config/crush/crush.json 写入 provider.workbuddy（type=openai）":
+    "Writes provider.workbuddy to ~/.config/crush/crush.json (type=openai)",
+  "在 ~/.aider.conf.yml 写入 model（openai/ 前缀）与 openai-api-base / openai-api-key":
+    "Writes model (openai/ prefix) and openai-api-base / openai-api-key to ~/.aider.conf.yml",
+  "在 ~/.config/zed/settings.json 写入 language_models.openai_compatible.WorkBuddy":
+    "Writes language_models.openai_compatible.WorkBuddy to ~/.config/zed/settings.json",
+  "在 ~/.continue/config.yaml 的 models[] 追加网关模型条目（其余条目原样保留）":
+    "Appends gateway model entries to models[] in ~/.continue/config.yaml (other entries kept as-is)",
 
   // toast / confirmDialog
   "读取备份失败": "Failed to read backup",

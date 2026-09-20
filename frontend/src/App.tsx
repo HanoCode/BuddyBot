@@ -12,6 +12,7 @@ import { EVENT, onEvent } from "./services/events";
 import { useT } from "./i18n";
 import Dashboard from "./pages/Dashboard";
 import Tokens from "./pages/Tokens";
+import ClientTokens from "./pages/ClientTokens";
 import Accounts from "./pages/Accounts";
 import Agents from "./pages/Agents";
 import Skills from "./pages/Skills";
@@ -28,6 +29,7 @@ function AnimatedRoutes() {
       <Routes location={location}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/tokens" element={<Tokens />} />
+        <Route path="/client-tokens" element={<ClientTokens />} />
         <Route path="/accounts" element={<Accounts />} />
         <Route path="/agents" element={<Agents />} />
         <Route path="/skills" element={<Skills />} />

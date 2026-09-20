@@ -315,6 +315,12 @@ func (s *SystemAPI) SendTestNotify(ctx context.Context) error {
 	return core.SendDesktopTestNotify()
 }
 
+// SessionArchiveNow 立即执行一轮会话自动归档，返回本次归档数量
+//（设置页「立即归档」按钮入口；不受定时开关限制）
+func (s *SystemAPI) SessionArchiveNow(ctx context.Context) (int64, error) {
+	return s.service.Scheduler().RunSessionArchiveNow()
+}
+
 // pickUpdateAsset 按 GOOS/GOARCH 挑选发布物里的安装包。
 // 优先可自动安装的产物（darwin: .app zip；windows: 便携 exe），其次手动安装的（dmg / NSIS 安装器）。
 func pickUpdateAsset(assets []ghAsset, goos, goarch string) *ghAsset {

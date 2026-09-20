@@ -330,6 +330,11 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "请求体不是合法 JSON")
 		return
 	}
+	// 会话归属兜底：请求体未带 session_id 时读 X-Session-Id header
+	// （部分客户端无法改请求体但能加 header），保证会话下钻不漏请求
+	if req.SessionID == "" {
+		req.SessionID = strings.TrimSpace(r.Header.Get("X-Session-Id"))
+	}
 	if req.Model == "" {
 		req.Model = "glm-5.2"
 	}

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Landmark, RefreshCw } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { Landmark, RefreshCw, Search } from "lucide-react";
 import { statsApi } from "../services/api";
 import { useAsync } from "../hooks/useAsync";
 import { EVENT, onEvent } from "../services/events";
@@ -37,11 +37,23 @@ export default function Tokens() {
 
   const dash = useAsync<Dashboard>(() => statsApi.dashboard(days), [days]);
 
-  // 会话下钻：缓存命中率 KPI + 会话 Top（keyName → session → 请求）
+  // 会话下钻：缓存命中率 KPI + 会话列表（keyName → session → 请求）
   const drill = useAsync<SessionDrilldown | null>(() => statsApi.sessionDrilldown(days), [days]);
+  const [sessQuery, setSessQuery] = useState("");
   const [openSession, setOpenSession] = useState<string | null>(null);
   const [sessionRows, setSessionRows] = useState<RequestLog[]>([]);
   const [sessionLoading, setSessionLoading] = useState(false);
+  const allSessions = drill.data?.sessions ?? [];
+  const sessions = useMemo(() => {
+    const q = sessQuery.trim().toLowerCase();
+    if (!q) return allSessions;
+    return allSessions.filter(
+      (s) =>
+        s.sessionId.toLowerCase().includes(q) ||
+        (s.keyName || "").toLowerCase().includes(q) ||
+        (s.title || "").toLowerCase().includes(q),
+    );
+  }, [allSessions, sessQuery]);
   const toggleSession = async (sid: string) => {
     if (openSession === sid) {
       setOpenSession(null);
@@ -453,11 +465,23 @@ export default function Tokens() {
                     <h3>{t("会话下钻")}</h3>
                     <div className="sub">
                       {t("密钥（调用方）→ 会话 → 请求 · 点击会话行展开请求明细")}
+                      {` · ${t("标题来自本机客户端会话（查无标题时显示 session_id）")}`}
                       {drill.data && drill.data.inputTokens > 0 &&
                         ` · ${t("缓存命中率 {a}%（{b} / {c}）", { a: drill.data.cacheHitRate.toFixed(1), b: fmtTok(drill.data.cacheTokens), c: fmtTok(drill.data.inputTokens) })}`}
                     </div>
                   </div>
-                  <span className="muted">{t("仅统计携带 session_id 的请求 · Top 20")}</span>
+                  <div className="head-actions">
+                    <div className="search-box" style={{ width: 200, flex: "none", maxWidth: "none" }}>
+                      <Search size={13} strokeWidth={2.2} />
+                      <input
+                        className="search-input"
+                        placeholder={t("搜索会话 / 标题 / 密钥")}
+                        value={sessQuery}
+                        onChange={(e) => setSessQuery(e.target.value)}
+                      />
+                    </div>
+                    <span className="muted">{t("{a} 个会话", { a: sessions.length })}</span>
+                  </div>
                 </div>
                 <div className="card-b" style={{ maxHeight: 320, overflow: "auto" }}>
                   {drill.error && <ErrorBlock message={drill.error} onRetry={() => void drill.reload()} />}
@@ -471,16 +495,16 @@ export default function Tokens() {
                         </tr>
                       </thead>
                       <tbody>
-                        {(drill.data?.sessions ?? []).map((sess) => (
-                          <>
+                        {sessions.map((sess) => (
+                          <Fragment key={sess.sessionId}>
                             <tr
                               key={sess.sessionId}
                               className={openSession === sess.sessionId ? "row-expiring" : ""}
                               style={{ cursor: "pointer" }}
                               onClick={() => void toggleSession(sess.sessionId)}
                             >
-                              <td className="em" data-tip={sess.sessionId} style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>
-                                {openSession === sess.sessionId ? "▾ " : "▸ "}{sess.sessionId}
+                              <td className="em" data-tip={sess.title ? `${sess.title}\n${sess.sessionId}` : sess.sessionId} style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {openSession === sess.sessionId ? "▾ " : "▸ "}{sess.title || sess.sessionId}
                               </td>
                               <td>{sess.keyName || "—"}</td>
                               <td className="num">{sess.requests}</td>
@@ -519,9 +543,12 @@ export default function Tokens() {
                                 </td>
                               </tr>
                             )}
-                          </>
+                          </Fragment>
                         ))}
-                        {(drill.data?.sessions ?? []).length === 0 && (
+                        {sessions.length === 0 && allSessions.length > 0 && (
+                          <tr><td colSpan={7}><EmptyBlock title={t("没有匹配的会话")} /></td></tr>
+                        )}
+                        {allSessions.length === 0 && (
                           <tr><td colSpan={7}><EmptyBlock title={t("窗口内没有携带 session_id 的请求")} /></td></tr>
                         )}
                       </tbody>

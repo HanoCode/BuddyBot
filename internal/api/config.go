@@ -168,6 +168,10 @@ func validateConfig(cfg *GatewayConfig) error {
 		(rc.IntervalMinutes < 5 || rc.IntervalMinutes > 1440) {
 		return fmt.Errorf("定时刷新间隔须在 5-1440 分钟之间（当前 %d）", rc.IntervalMinutes)
 	}
+	// 会话自动归档：空闲阈值 1-365 天（0 = 默认 7 天，归一化在加载时做）
+	if ad := cfg.Schedule.SessionArchive.IdleDays; ad != 0 && (ad < 1 || ad > 365) {
+		return fmt.Errorf("会话归档空闲阈值须在 1-365 天之间（当前 %d）", ad)
+	}
 	if cfg.Redis.Enabled {
 		u := strings.TrimSpace(cfg.Redis.URL)
 		if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {

@@ -18,6 +18,13 @@ const AGENT_DESC: Record<string, string> = {
   "kimi-code": "写入 ~/.kimi-code/config.toml 的 default_model 与 providers.workbuddy",
   codebuddy: "在 ~/.codebuddy/models.json 写入 vendor=WorkBuddy 的自定义模型条目（其余模型原样保留）",
   workbuddy: "在 ~/.workbuddy/models.json 写入 vendor=WorkBuddy 的自定义模型条目（其余模型原样保留）",
+  zcode: "在 ~/.zcode/v2/config.json 写入 provider.workbuddy（需先退出 ZCode，运行中的 ZCode 会在退出时覆盖本文件）",
+  qwen: "在 ~/.qwen/settings.json 写入 modelProviders.openai 与 WORKBUDDY_GATEWAY_API_KEY",
+  minimax: "在 ~/.minimax/config.yaml 写入 provider.workbuddy（@ai-sdk/openai-compatible）",
+  crush: "在 ~/.config/crush/crush.json 写入 provider.workbuddy（type=openai）",
+  aider: "在 ~/.aider.conf.yml 写入 model（openai/ 前缀）与 openai-api-base / openai-api-key",
+  zed: "在 ~/.config/zed/settings.json 写入 language_models.openai_compatible.WorkBuddy",
+  continue: "在 ~/.continue/config.yaml 的 models[] 追加网关模型条目（其余条目原样保留）",
 };
 
 export default function Agents() {

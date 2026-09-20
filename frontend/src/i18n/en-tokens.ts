@@ -60,4 +60,6 @@ export const en: Record<string, string> = {
   "深色 = P50 · 浅色 = P90": "Dark = P50 · Light = P90",
   "暂无模型用量": "No model usage yet",
   "P50 {a} · P90 {b} · 均 {c}": "P50 {a} · P90 {b} · avg {c}",
+  "搜索会话 / 标题 / 密钥": "Search sessions / titles / keys",
+  "标题来自本机客户端会话（查无标题时显示 session_id）": "Titles from local client sessions (falls back to session_id when unavailable)",
 };

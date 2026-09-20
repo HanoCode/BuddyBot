@@ -57,3 +57,11 @@ export function InstallUpdate(filePath: string): $CancellablePromise<void> {
 export function SendTestNotify(): $CancellablePromise<void> {
     return $Call.ByID(3108330450);
 }
+
+/**
+ * SessionArchiveNow 立即执行一轮会话自动归档，返回本次归档数量
+ * （设置页「立即归档」按钮入口；不受定时开关限制）
+ */
+export function SessionArchiveNow(): $CancellablePromise<number> {
+    return $Call.ByID(1855504133);
+}

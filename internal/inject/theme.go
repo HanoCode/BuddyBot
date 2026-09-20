@@ -19,8 +19,9 @@ import (
 // 原理（逆向 WorkBuddy 主题机制）：
 //  1. 设计 token（--wb-*、--dc-*、--vscode-*）定义在
 //    `:root, body[data-vscode-theme-name="IDE Light"]` 联合选择器上，
-//     部分容器还有局部硬编码覆盖 —— 只改 :root 无效，
-//     须以 body[data-vscode-theme-name] 同优先级后插入胜出。
+//     部分容器还有局部硬编码覆盖 —— 只改 :root 无效；注入样式在 head 中
+//     可能先于官方 CSS 加载，色板须用 html body[data-vscode-theme-name]
+//     更高特异性稳赢，不能赌「同优先级后插入」。
 //  2. WorkBuddy 自带深色模式（html[data-theme="dark"]/html.cb-dark/
 //     body[data-vscode-theme-name="IDE Night"]），深色主题先切官方深色
 //     （局部变量随之变深）再注入自定义色板；浅色主题只注入色板。
@@ -205,10 +206,15 @@ func themeIsCustom(id string) bool { return id != "default" && id != "dark" }
 
 // ---------- CSS 生成 ----------
 
-// themeVarsCSS 色板层：body[data-vscode-theme-name] 同优先级后插入胜出
+// themeVarsCSS 色板层：html body[data-vscode-theme-name]（0,1,2）压过官方深浅色
+// 规则（最高 0,1,1）。必须用更高特异性：注入 <style> 在 head 中可能先于官方
+// CSS（LINK/后插 style），同优先级会按官方后加载胜出 —— 曾因此整块色板被
+// 官方 5.6.x 深色规则覆盖，--wb-bg-primary 又被官方重定义为 var(--wb-palette-gray-3)，
+// 与别名层 --wb-palette-gray-3:var(--wb-bg-primary) 成循环引用双双失效，
+// 壁纸层 #root 背景在计算值阶段整条被丢弃（壁纸不显示）。
 func themeVarsCSS(t themeDef) string {
 	var b strings.Builder
-	b.WriteString("body[data-vscode-theme-name]{")
+	b.WriteString("html body[data-vscode-theme-name]{")
 	for k, v := range t.Color {
 		b.WriteString(k + ":" + v + ";")
 	}
@@ -296,6 +302,14 @@ func themeExtrasCSS(textShadow bool) string {
 		// WorkDaddy 的自定义主题标记属性统一改成本项目的命名空间
 		b.WriteString(strings.ReplaceAll(p.CSS, `html[data-wbs-theme="1"]`, `html[data-wbdesk-theme="1"]`))
 	}
+	// 修复 patch-15 的 [class*="tooltip"] 子串误伤：.cr-send-button__tooltip-wrapper
+	// 是发送按钮的定位包装层（官方本身透明，tooltip 气泡在其内部另行渲染），
+	// 被 patch-15 当成弹层涂上不透明 popover 底色 —— 深色主题下圆形发送按钮
+	// 后面出现方形黑块。三重同名类把特异性抬到 (0,5,2)，稳压 patch-15 的
+	// (0,4,2)（!important 同级，同表靠后胜出）。
+	b.WriteString(`html[data-theme="dark"] body[data-vscode-theme-name] ` +
+		`.cr-send-button__tooltip-wrapper.cr-send-button__tooltip-wrapper.cr-send-button__tooltip-wrapper` +
+		`{background:transparent !important;}`)
 	if textShadow {
 		b.WriteString(`body[data-vscode-theme-name] .conversation-timeline .cr-document,` +
 			`body[data-vscode-theme-name] .conversation-timeline .cr-document *{` +
@@ -322,6 +336,9 @@ func themeBgCSS(dataURL string, mask, blur int) string {
 		"linear-gradient(180deg,transparent 0 58%,color-mix(in srgb,var(--wb-bg-primary) 50%,transparent) 100%)," +
 		"url(" + dataURL + ") right center / cover no-repeat fixed !important;}")
 	b.WriteString(P + `.teams-container,` + P + `.teams-container.is-mac{background:transparent !important;` + blurCSS + `}`)
+	// 5.6.0 新增布局层：grid 滚动容器 + grid 布局容器（react-grid 式绝对定位窗格，
+	// 后者为 CSS Modules 哈希类 _gridView_<hash>，用子串匹配抗哈希变动）
+	b.WriteString(P + `.teams-grid-scroll-content,` + P + `[class*="_gridView_"]{background:transparent !important;` + blurCSS + `}`)
 	b.WriteString(P + `[data-view-id]{background:transparent !important}`)
 	b.WriteString(P + `.main-content{background:transparent !important}`)
 	// 左侧菜单（会话列表）透明：连同子组件全透明，背景图直接透出
@@ -365,31 +382,31 @@ func (m *Manager) wallsDir() string {
 // wallpaperDataURL 解析壁纸引用为 data URL（preset: 内嵌 / custom: 磁盘文件）
 func (m *Manager) wallpaperDataURL(ref string) (string, error) {
 	if ref == "" {
-		return "", fmt.Errorf("壁纸引用为空")
+		return "", fmt.Errorf("%s", m.tt("壁纸引用为空", "empty wallpaper reference"))
 	}
 	switch {
 	case strings.HasPrefix(ref, "preset:"):
 		id := strings.TrimPrefix(ref, "preset:")
 		if !regexp.MustCompile(`^wallpaper-\d+$`).MatchString(id) {
-			return "", fmt.Errorf("非法的内置壁纸 ID: %s", id)
+			return "", fmt.Errorf("%s: %s", m.tt("非法的内置壁纸 ID", "invalid preset wallpaper ID"), id)
 		}
 		raw, err := wallFS.ReadFile("wallpapers/" + id + ".webp")
 		if err != nil {
-			return "", fmt.Errorf("内置壁纸不存在: %s", id)
+			return "", fmt.Errorf("%s: %s", m.tt("内置壁纸不存在", "preset wallpaper not found"), id)
 		}
 		return "data:image/webp;base64," + base64.StdEncoding.EncodeToString(raw), nil
 	case strings.HasPrefix(ref, "custom:"):
 		name := strings.TrimPrefix(ref, "custom:")
 		if !customWallNameRe.MatchString(name) {
-			return "", fmt.Errorf("非法的自定义壁纸名: %s", name)
+			return "", fmt.Errorf("%s: %s", m.tt("非法的自定义壁纸名", "invalid custom wallpaper name"), name)
 		}
 		raw, err := os.ReadFile(filepath.Join(m.wallsDir(), name))
 		if err != nil {
-			return "", fmt.Errorf("自定义壁纸不存在: %s", name)
+			return "", fmt.Errorf("%s: %s", m.tt("自定义壁纸不存在", "custom wallpaper not found"), name)
 		}
 		return "data:image/webp;base64," + base64.StdEncoding.EncodeToString(raw), nil
 	}
-	return "", fmt.Errorf("非法的壁纸引用: %s", ref)
+	return "", fmt.Errorf("%s: %s", m.tt("非法的壁纸引用", "invalid wallpaper reference"), ref)
 }
 
 // addCustomWallpaper 保存自定义壁纸文件并返回引用名（custom-<时间戳>.webp）
@@ -397,14 +414,14 @@ func (m *Manager) addCustomWallpaper(dataURL string) (string, error) {
 	const marker = ";base64,"
 	idx := strings.Index(dataURL, marker)
 	if idx < 0 {
-		return "", fmt.Errorf("壁纸数据格式无效")
+		return "", fmt.Errorf("%s", m.tt("壁纸数据格式无效", "invalid wallpaper data format"))
 	}
 	raw, err := base64.StdEncoding.DecodeString(dataURL[idx+len(marker):])
 	if err != nil {
-		return "", fmt.Errorf("壁纸数据解码失败: %w", err)
+		return "", fmt.Errorf("%s: %w", m.tt("壁纸数据解码失败", "failed to decode wallpaper data"), err)
 	}
 	if len(raw) > 8<<20 {
-		return "", fmt.Errorf("壁纸过大（超过 8MB）")
+		return "", fmt.Errorf("%s", m.tt("壁纸过大（超过 8MB）", "wallpaper too large (over 8MB)"))
 	}
 	if err := os.MkdirAll(m.wallsDir(), 0o700); err != nil {
 		return "", err
@@ -419,7 +436,7 @@ func (m *Manager) addCustomWallpaper(dataURL string) (string, error) {
 // deleteCustomWallpaper 删除自定义壁纸文件（非法名直接拒绝）
 func (m *Manager) deleteCustomWallpaper(name string) error {
 	if !customWallNameRe.MatchString(name) {
-		return fmt.Errorf("非法的自定义壁纸名: %s", name)
+		return fmt.Errorf("%s: %s", m.tt("非法的自定义壁纸名", "invalid custom wallpaper name"), name)
 	}
 	err := os.Remove(filepath.Join(m.wallsDir(), name))
 	if os.IsNotExist(err) {
@@ -436,7 +453,7 @@ func (m *Manager) deleteCustomWallpaper(name string) error {
 func (m *Manager) buildThemeCSS(id string, th core.ThemeConfig) (string, error) {
 	t, ok := builtinThemes[id]
 	if !ok {
-		return "", fmt.Errorf("未知主题: %s", id)
+		return "", fmt.Errorf("%s: %s", m.tt("未知主题", "unknown theme"), id)
 	}
 	custom := themeIsCustom(id)
 	var b strings.Builder
@@ -564,7 +581,7 @@ func jsonStr(s string) string {
 // ApplyTheme 保存并应用主题（带重试：页面导航时旧连接短暂失效是正常竞态）
 func (m *Manager) ApplyTheme(th core.ThemeConfig) error {
 	if !themeIsCustom(th.ID) && th.ID != "default" && th.ID != "dark" {
-		return fmt.Errorf("未知主题: %s", th.ID)
+		return fmt.Errorf("%s: %s", m.tt("未知主题", "unknown theme"), th.ID)
 	}
 	// 持久化（先存后应用：刷新/重启后 restoreTheme 能恢复）
 	_ = m.svc.UpdateInjectConfig(func(c *core.InjectConfig) { c.Theme = th })
@@ -572,12 +589,12 @@ func (m *Manager) ApplyTheme(th core.ThemeConfig) error {
 	conn := m.conn
 	m.mu.Unlock()
 	if conn == nil {
-		return fmt.Errorf("注入未运行")
+		return fmt.Errorf("%s", m.tt("注入未运行", "injection not running"))
 	}
 	var lastErr error
 	for attempt := 0; attempt < 4; attempt++ {
 		if !conn.alive() {
-			return fmt.Errorf("注入连接已断开，等待自动重连后重试")
+			return fmt.Errorf("%s", m.tt("注入连接已断开，等待自动重连后重试", "injection connection lost; wait for auto-reconnect and retry"))
 		}
 		css, err := m.buildThemeCSS(th.ID, th)
 		if err == nil {
@@ -590,7 +607,7 @@ func (m *Manager) ApplyTheme(th core.ThemeConfig) error {
 		lastErr = err
 		time.Sleep(time.Duration(250*(attempt+1)) * time.Millisecond)
 	}
-	return fmt.Errorf("应用主题失败: %w", lastErr)
+	return fmt.Errorf("%s: %w", m.tt("应用主题失败", "failed to apply theme"), lastErr)
 }
 
 // restoreTheme 注入/重连后恢复已保存主题（ID 为空=从未设置，不注入不守护）
@@ -642,7 +659,7 @@ func (m *Manager) panelWalls() []map[string]string {
 			id := strings.TrimSuffix(name, ".webp")
 			list = append(list, map[string]string{
 				"id":   "preset:" + id,
-				"name": "壁纸 " + strings.TrimPrefix(id, "wallpaper-"),
+				"name": m.tt("壁纸 ", "Wallpaper ") + strings.TrimPrefix(id, "wallpaper-"),
 				"url":  "data:image/webp;base64," + base64.StdEncoding.EncodeToString(raw),
 			})
 		}
@@ -661,7 +678,7 @@ func (m *Manager) panelWalls() []map[string]string {
 			}
 			list = append(list, map[string]string{
 				"id":   "custom:" + names[i],
-				"name": "自定义壁纸",
+				"name": m.tt("自定义壁纸", "Custom wallpaper"),
 				"url":  "data:image/webp;base64," + base64.StdEncoding.EncodeToString(raw),
 			})
 		}

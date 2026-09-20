@@ -165,6 +165,157 @@ func TestApplyAgentCodexAndKimi(t *testing.T) {
 	}
 }
 
+func TestApplyAgentOpenAICompatibleGroup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ZCODE_HOME", filepath.Join(home, ".zcode"))
+	t.Setenv("QWEN_CONFIG_DIR", filepath.Join(home, ".qwen"))
+	t.Setenv("MINIMAX_DATA_DIR", filepath.Join(home, ".minimax"))
+	t.Setenv("CRUSH_HOME", filepath.Join(home, ".config", "crush"))
+	t.Setenv("AIDER_CONFIG", filepath.Join(home, ".aider.conf.yml"))
+	t.Setenv("ZED_CONFIG_DIR", filepath.Join(home, ".config", "zed"))
+	t.Setenv("CONTINUE_CONFIG_DIR", filepath.Join(home, ".continue"))
+	backupRoot := filepath.Join(home, "backups")
+	base, key := "http://127.0.0.1:7863", "sk-all"
+	ms := []string{"glm-5", "deepseek-v4-flash"}
+
+	// ZCode：provider.workbuddy（kind=openai-compatible）
+	if _, err := ApplyAgent("zcode", base, key, ms, backupRoot); err != nil {
+		t.Fatalf("zcode 接入失败: %v", err)
+	}
+	var zc map[string]any
+	if err := json.Unmarshal(mustRead(t, zcodeConfigPath()), &zc); err != nil {
+		t.Fatalf("zcode 不是合法 JSON: %v", err)
+	}
+	zp := zc["provider"].(map[string]any)["workbuddy"].(map[string]any)
+	if zp["kind"] != "openai-compatible" || zp["source"] != "custom" {
+		t.Fatalf("zcode provider 字段不符: %v", zp)
+	}
+	zopts := zp["options"].(map[string]any)
+	if zopts["baseURL"] != base+"/v1" || zopts["apiKey"] != key {
+		t.Fatalf("zcode options 不符: %v", zopts)
+	}
+	if _, ok := zp["models"].(map[string]any)["glm-5"]; !ok {
+		t.Fatalf("zcode 模型未写入: %v", zp["models"])
+	}
+
+	// Qwen Code：modelProviders.openai[] + env + selectedType
+	if _, err := ApplyAgent("qwen", base, key, ms, backupRoot); err != nil {
+		t.Fatalf("qwen 接入失败: %v", err)
+	}
+	var qw map[string]any
+	if err := json.Unmarshal(mustRead(t, qwenSettingsPath()), &qw); err != nil {
+		t.Fatalf("qwen 不是合法 JSON: %v", err)
+	}
+	if qw["env"].(map[string]any)["WORKBUDDY_GATEWAY_API_KEY"] != key {
+		t.Fatalf("qwen env 未写入: %v", qw["env"])
+	}
+	qEntry := qw["modelProviders"].(map[string]any)["openai"].([]any)[0].(map[string]any)
+	if qEntry["id"] != "glm-5" || qEntry["baseUrl"] != base+"/v1" {
+		t.Fatalf("qwen modelProviders 条目不符: %v", qEntry)
+	}
+	if qw["security"].(map[string]any)["auth"].(map[string]any)["selectedType"] != "openai" {
+		t.Fatalf("qwen selectedType 未设置: %v", qw["security"])
+	}
+
+	// MiniMax：config.yaml provider.workbuddy，其余 provider 保留
+	existingMinimax := "logLevel: info\nprovider:\n  minimax:\n    name: MiniMax\n    npm: '@ai-sdk/anthropic'\n    models:\n      MiniMax-M3:\n        name: MiniMax-M3\n"
+	if err := os.MkdirAll(filepath.Dir(minimaxConfigPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(minimaxConfigPath(), []byte(existingMinimax), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyAgent("minimax", base, key, ms, backupRoot); err != nil {
+		t.Fatalf("minimax 接入失败: %v", err)
+	}
+	mmText := string(mustRead(t, minimaxConfigPath()))
+	if !strings.Contains(mmText, "logLevel: info") || !strings.Contains(mmText, "MiniMax-M3") {
+		t.Fatalf("minimax 原有内容被破坏: %s", mmText)
+	}
+	for _, want := range []string{"workbuddy:", "@ai-sdk/openai-compatible", base + "/v1"} {
+		if !strings.Contains(mmText, want) {
+			t.Fatalf("minimax 缺少 %q: %s", want, mmText)
+		}
+	}
+
+	// Crush：provider.workbuddy（type=openai）
+	if _, err := ApplyAgent("crush", base, key, ms, backupRoot); err != nil {
+		t.Fatalf("crush 接入失败: %v", err)
+	}
+	var cr map[string]any
+	if err := json.Unmarshal(mustRead(t, crushConfigPath()), &cr); err != nil {
+		t.Fatalf("crush 不是合法 JSON: %v", err)
+	}
+	cp := cr["provider"].(map[string]any)["workbuddy"].(map[string]any)
+	if cp["type"] != "openai" || cp["base_url"] != base+"/v1" || cp["api_key"] != key {
+		t.Fatalf("crush provider 字段不符: %v", cp)
+	}
+
+	// Aider：扁平 YAML
+	if _, err := ApplyAgent("aider", base, key, ms, backupRoot); err != nil {
+		t.Fatalf("aider 接入失败: %v", err)
+	}
+	aiText := string(mustRead(t, aiderConfigPath()))
+	for _, want := range []string{
+		`model: "openai/glm-5"`, `openai-api-base: "` + base + `/v1"`, `openai-api-key: "sk-all"`,
+	} {
+		if !strings.Contains(aiText, want) {
+			t.Fatalf("aider 缺少 %q: %s", want, aiText)
+		}
+	}
+
+	// Zed：language_models.openai_compatible.WorkBuddy
+	if _, err := ApplyAgent("zed", base, key, ms, backupRoot); err != nil {
+		t.Fatalf("zed 接入失败: %v", err)
+	}
+	var zd map[string]any
+	if err := json.Unmarshal(mustRead(t, zedSettingsPath()), &zd); err != nil {
+		t.Fatalf("zed 不是合法 JSON: %v", err)
+	}
+	zw := zd["language_models"].(map[string]any)["openai_compatible"].(map[string]any)["WorkBuddy"].(map[string]any)
+	if zw["api_url"] != base+"/v1" || zw["api_key"] != key {
+		t.Fatalf("zed provider 字段不符: %v", zw)
+	}
+	if len(zw["available_models"].([]any)) != 2 {
+		t.Fatalf("zed 模型未全量写入: %v", zw["available_models"])
+	}
+
+	// Continue：config.yaml models[]，二次写入应替换旧条目且保留外部条目
+	continueSeed := "name: my-config\nversion: 0.0.1\nschema: v1\nmodels:\n  - name: Local Ollama\n    provider: ollama\n    model: qwen3\n"
+	if err := os.MkdirAll(filepath.Dir(continueConfigPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(continueConfigPath(), []byte(continueSeed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyAgent("continue", base, key, ms, backupRoot); err != nil {
+		t.Fatalf("continue 接入失败: %v", err)
+	}
+	if _, err := ApplyAgent("continue", base, key, []string{"glm-5"}, backupRoot); err != nil {
+		t.Fatalf("continue 二次接入失败: %v", err)
+	}
+	coText := string(mustRead(t, continueConfigPath()))
+	if !strings.Contains(coText, "Local Ollama") || !strings.Contains(coText, "qwen3") {
+		t.Fatalf("continue 外部条目被破坏: %s", coText)
+	}
+	if got := strings.Count(coText, "apiBase: "+base+"/v1"); got != 1 {
+		t.Fatalf("continue 自家条目应恰好 1 条，实际 %d: %s", got, coText)
+	}
+	if !strings.Contains(coText, "schema: v1") {
+		t.Fatalf("continue 头字段丢失: %s", coText)
+	}
+
+	// 探测应全部识别
+	for _, tg := range DetectAgents(base, key) {
+		switch tg.ID {
+		case "zcode", "qwen", "minimax", "crush", "aider", "zed", "continue":
+			if !tg.Installed || !tg.Configured {
+				t.Fatalf("%s 应为已安装+已接入: %+v", tg.ID, tg)
+			}
+		}
+	}
+}
+
 func TestApplyAgentUnsupported(t *testing.T) {
 	if _, err := ApplyAgent("dream-skin", "http://x", "k", nil, t.TempDir()); err == nil {
 		t.Fatal("不支持的客户端应报错")

@@ -17,13 +17,16 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed frontend/src/data/prompts.json
+var promptsJSON []byte
+
 func main() {
 	// 过滤标准库 log 的良性噪音（net/http 空闲连接上的迟到响应，见 logfilter.go）
 	core.InstallStdLogFilter()
 
 	// 初始化核心服务（配置加载 / 本地存储），网关在应用就绪后启动
 	coreService := core.NewService()
-	injectManager := inject.NewManager(coreService)
+	injectManager := inject.NewManager(coreService, promptsJSON)
 
 	// 系统级桌面通知（Wails 内置服务）：macOS 裸二进制无 bundle identifier 时
 	// 服务 Startup 会失败并中止启动，故先探测可用性，不可用则静默降级不注册

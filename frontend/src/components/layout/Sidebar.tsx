@@ -7,6 +7,7 @@ import {
   MessageSquare,
   ScrollText,
   BarChart3,
+  AppWindow,
   Bot,
   Puzzle,
   Server,
@@ -68,6 +69,7 @@ export default function Sidebar() {
       items: [
         { to: "/", label: t("仪表盘"), icon: <LayoutDashboard size={17} strokeWidth={1.9} /> },
         { to: "/tokens", label: t("Token 消耗"), icon: <BarChart3 size={17} strokeWidth={1.9} /> },
+        { to: "/client-tokens", label: t("客户端消耗"), icon: <AppWindow size={17} strokeWidth={1.9} /> },
         {
           to: "/accounts",
           label: t("账号管理"),

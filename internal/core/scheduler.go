@@ -131,6 +131,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 	go s.refreshLoop(runCtx)
 	go s.dailyReportLoop(runCtx)
 	go s.modelProbeLoop(runCtx)
+	go s.sessionArchiveLoop(runCtx)
 }
 
 // expiryPatrolInterval 积分到期巡检周期（对齐 switch-gateway：15 分钟）。
@@ -150,6 +151,43 @@ func (s *Scheduler) expiryPatrolLoop(ctx context.Context) {
 			s.patrolExpiry()
 		}
 	}
+}
+
+// sessionArchiveInterval 会话自动归档巡检周期：30 分钟（低频写外部库，足够及时）
+const sessionArchiveInterval = 30 * time.Minute
+
+// sessionArchiveLoop 会话自动归档巡检：把官方客户端中空闲超过阈值的
+// 已结束会话标记为 archived。开关关闭或目标库不存在时静默跳过；
+// 失败写事件日志（下一轮再试），不参与任务日志/推送体系（非账号型任务）。
+func (s *Scheduler) sessionArchiveLoop(ctx context.Context) {
+	ticker := time.NewTicker(sessionArchiveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cfg := s.svc.GetConfig()
+			if !cfg.Schedule.SessionArchive.Enabled {
+				continue
+			}
+			if n, err := ArchiveIdleSessions(s.svc); err != nil {
+				EmitEvent(EventGatewayLog, map[string]any{
+					"level": "error", "message": "会话自动归档失败: " + err.Error(),
+				})
+			} else if n > 0 {
+				EmitEvent(EventGatewayLog, map[string]any{
+					"level": "info", "message": fmt.Sprintf("会话自动归档：已归档 %d 个空闲会话", n),
+				})
+			}
+		}
+	}
+}
+
+// RunSessionArchiveNow 立即执行一轮会话归档（设置页手动触发入口，
+// 不受开关限制：用户明确点了按钮就该跑一次）
+func (s *Scheduler) RunSessionArchiveNow() (int64, error) {
+	return ArchiveIdleSessions(s.svc)
 }
 
 // patrolIntervalMs 巡逻/刷新类请求的账号启动间隔（防风控节流口径，保持与历史

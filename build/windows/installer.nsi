@@ -1,7 +1,9 @@
 ; BuddyBot Windows 安装器（NSIS）
-; 构建：makensis /DARCH=amd64 /DBINDIR=bin build\windows\installer.nsi
+; 构建：makensis /DARCH=amd64 "/DBINDIR=$PWD\bin" build\windows\installer.nsi
 ; 产物：bin\BuddyBot-windows-${ARCH}-installer.exe
 ; 与便携版 BuddyBot-windows-${ARCH}.exe 名称区分开。
+; 注意：BINDIR 必须用 Windows 反斜杠路径——NSIS 的 File/OutFile 在 Windows 上
+; 不把 / 当路径分隔符，混用会导致 "no files found"。
 
 !ifndef ARCH
   !define ARCH "amd64"
@@ -34,7 +36,7 @@ RequestExecutionLevel admin
 Section "Install"
   nsExec::ExecToLog 'taskkill /IM BuddyBot.exe /F'
   SetOutPath "$INSTDIR"
-  File "${BINDIR}/BuddyBot.exe"
+  File "${BINDIR}\BuddyBot.exe"
   WriteRegStr HKLM "Software\BuddyBot" "InstallDir" "$INSTDIR"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 

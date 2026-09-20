@@ -61,12 +61,9 @@ func quitApp() {
 	}
 }
 
-// updateCacheDir 更新包下载缓存目录（本地缓存优先，退回 data/updates）。
+// updateCacheDir 更新包下载缓存目录（应用数据目录内的 updates/）
 func updateCacheDir() (string, error) {
-	dir := "data/updates"
-	if base, err := os.UserCacheDir(); err == nil {
-		dir = filepath.Join(base, "workbuddy-desktop", "updates")
-	}
+	dir := filepath.Join(core.AppDir(), "updates")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

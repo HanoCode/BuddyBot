@@ -52,6 +52,7 @@ func (s *StatsAPI) SessionDrilldown(ctx context.Context, days int) (*core.Sessio
 }
 
 // SessionRequests 单个会话的请求明细（时间升序），下钻第三级。
-func (s *StatsAPI) SessionRequests(ctx context.Context, sessionID string, days int) ([]core.RequestLog, error) {
+// 每行附带按当前单价表换算的金额（未定价模型 priced=false）。
+func (s *StatsAPI) SessionRequests(ctx context.Context, sessionID string, days int) ([]core.RequestLogCost, error) {
 	return s.service.Stats().SessionRequests(sessionID, days), nil
 }

@@ -378,6 +378,7 @@ body {
   height: 28px; padding: 0 13px; border: none; border-radius: 7px; background: transparent;
   font-family: var(--font); font-size: 12.5px; font-weight: 600; color: var(--text-2); cursor: pointer;
   transition: all .15s var(--ease);
+  white-space: nowrap; /* 页头文案变长时，标签不许被挤成两行（否则分段控件的选中底色会错位） */
 }
 .seg button.on { background: var(--surface); color: var(--text-1); box-shadow: var(--shadow-1); }
 
@@ -536,6 +537,8 @@ textarea.input { height: auto; padding: 10px 12px; resize: none; }
 
 /* ============ Token 消耗页 ============ */
 .kpis7 { display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; margin-bottom: 14px; }
+/* 金额 KPI 行：合计 / 日均 / 计价覆盖（Token 消耗、客户端消耗两页共用） */
+.kpis3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
 .tok-kpi { padding: 14px 15px; min-width: 0; }
 .tok-kpi .k { font-size: 11.5px; color: var(--text-3); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tok-kpi .v { font-size: 21px; font-weight: 750; letter-spacing: -.02em; margin-top: 6px; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -560,6 +563,8 @@ textarea.input { height: auto; padding: 10px 12px; resize: none; }
 .ws-row .cells { flex: 1 1 0; display: flex; gap: 1px; min-width: 0; }
 .ws-row .cells i { flex: 1 1 0; height: 10px; border-radius: 1.5px; background: var(--surface-3); }
 .ws-row .num { width: 62px; flex: none; text-align: right; font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* 金额作为 token 的次行：窄卡片里再开一列会把 .bar 挤出卡片，故不新增列宽 */
+.ws-row .num small { display: block; font-size: 10px; font-weight: 600; color: var(--text-3); letter-spacing: .01em; }
 .ws-row .bar { width: 64px; flex: none; height: 5px; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
 .ws-row .bar i { display: block; height: 100%; border-radius: 99px; background: var(--primary); }
 
@@ -583,7 +588,7 @@ textarea.input { height: auto; padding: 10px 12px; resize: none; }
 
 /* ============ Responsive ============ */
 @media (max-width: 1100px) {
-  .kpis, .kpis7 { grid-template-columns: repeat(2, 1fr); }
+  .kpis, .kpis7, .kpis3 { grid-template-columns: repeat(2, 1fr); }
   .dash-grid { grid-template-columns: 1fr; }
   .chat-wrap { grid-template-columns: 1fr; }
   .chat-side { display: none; }

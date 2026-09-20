@@ -19,6 +19,7 @@ type TrendPoint struct {
 	InputTokens  int     `json:"inputTokens"`
 	OutputTokens int     `json:"outputTokens"`
 	CacheTokens  int     `json:"cacheTokens"` // 上游 usage 命中缓存的输入 token
+	Cost         float64 `json:"cost"`        // 按单价表换算的金额（元）；未定价模型不计入
 	Errors       int     `json:"errors"`
 	AvgLatency   float64 `json:"avgLatency"`
 }
@@ -31,6 +32,8 @@ type ModelStat struct {
 	InputTokens  int     `json:"inputTokens"`
 	OutputTokens int     `json:"outputTokens"`
 	CacheTokens  int     `json:"cacheTokens"` // 上游 usage 命中缓存的输入 token
+	Cost         float64 `json:"cost"`        // 按单价表换算的金额（元）
+	Priced       bool    `json:"priced"`      // 该模型是否已配单价（false = 未定价，Cost 恒为 0）
 	Errors       int     `json:"errors"`
 	AvgLatency   float64 `json:"avgLatency"`
 	P50          float64 `json:"p50"`
@@ -47,6 +50,7 @@ type KeyStat struct {
 	KeyName    string  `json:"keyName"`
 	Requests   int     `json:"requests"`
 	Tokens     int     `json:"tokens"`
+	Cost       float64 `json:"cost"` // 按单价表换算的金额（元）
 	Errors     int     `json:"errors"`
 	AvgLatency float64 `json:"avgLatency"`
 }
@@ -75,8 +79,13 @@ type Overview struct {
 	InputTokens  int     `json:"inputTokens"`
 	OutputTokens int     `json:"outputTokens"`
 	CacheTokens  int     `json:"cacheTokens"`
-	Errors       int     `json:"errors"`
-	SuccessRate  float64 `json:"successRate"`
+	// Cost 窗口内金额（元）；TodayCost 今日金额；UnpricedModels 是窗口内出现过、
+	// 但没有单价的模型数——它们不计入 Cost，前端须如实标注，避免读者把金额当全集。
+	Cost           float64 `json:"cost"`
+	TodayCost      float64 `json:"todayCost"`
+	UnpricedModels int     `json:"unpricedModels"`
+	Errors         int     `json:"errors"`
+	SuccessRate    float64 `json:"successRate"`
 
 	AvgLatency   float64 `json:"avgLatency"`
 	FirstLatency float64 `json:"firstLatency"`
@@ -88,6 +97,7 @@ type Overview struct {
 
 	Days          int     `json:"days"`
 	AvgPerDay     float64 `json:"avgPerDay"`
+	AvgCostPerDay float64 `json:"avgCostPerDay"` // 活跃自然日的日均金额（元）
 	PeakDate      string  `json:"peakDate"`
 	PeakTokens    int     `json:"peakTokens"`
 	TodayTokens   int     `json:"todayTokens"`
@@ -130,11 +140,21 @@ type Dashboard struct {
 type Stats struct {
 	store    *Store
 	accounts func() []Account
+	prices   func() map[string]ModelPrice
 }
 
-// NewStats 创建聚合器；accounts 提供当前账号视图（用于总览中的池状态）。
-func NewStats(store *Store, accounts func() []Account) *Stats {
-	return &Stats{store: store, accounts: accounts}
+// NewStats 创建聚合器；accounts 提供当前账号视图（用于总览中的池状态），
+// prices 提供模型单价表（用于把 token 换算成金额；nil = 全部未定价）。
+func NewStats(store *Store, accounts func() []Account, prices func() map[string]ModelPrice) *Stats {
+	return &Stats{store: store, accounts: accounts, prices: prices}
+}
+
+// priceTable 当前单价表快照（nil provider 视为空表：金额一律 0 / 未定价）
+func (s *Stats) priceTable() PriceTable {
+	if s.prices == nil {
+		return NewPriceTable(nil)
+	}
+	return NewPriceTable(s.prices())
 }
 
 // Range 时间窗口（左闭右开），全部以本地时区自然日对齐。
@@ -160,11 +180,12 @@ func (s *Stats) Dashboard(days int) Dashboard {
 	tasks := s.store.ListTaskLogs()
 
 	in := filterRequestLogs(logs, r)
+	pt := s.priceTable()
 	d := Dashboard{RangeSecs: days * 86400}
-	d.Overview = s.overview(in, tasks, r)
-	d.Daily = dailyTrend(in, days)
-	d.Models = modelStats(in)
-	d.Keys = keyStats(in)
+	d.Overview = s.overview(in, tasks, r, pt)
+	d.Daily = dailyTrend(in, days, pt)
+	d.Models = modelStats(in, pt)
+	d.Keys = keyStats(in, pt)
 	d.Hourly = hourlyStats(in)
 	d.Tasks = taskStats(tasks, r)
 	d.HeatmapDays, d.Heatmap = heatmap(in, days)
@@ -181,12 +202,13 @@ type SessionStat struct {
 	KeyName      string `json:"keyName"`
 	FirstTS      int64  `json:"firstTs"`
 	LastTS       int64  `json:"lastTs"`
-	Requests     int    `json:"requests"`
-	Tokens       int    `json:"tokens"`
-	InputTokens  int    `json:"inputTokens"`
-	OutputTokens int    `json:"outputTokens"`
-	CacheTokens  int    `json:"cacheTokens"`
-	Errors       int    `json:"errors"`
+	Requests     int     `json:"requests"`
+	Tokens       int     `json:"tokens"`
+	InputTokens  int     `json:"inputTokens"`
+	OutputTokens int     `json:"outputTokens"`
+	CacheTokens  int     `json:"cacheTokens"`
+	Cost         float64 `json:"cost"` // 按单价表换算的金额（元）
+	Errors       int     `json:"errors"`
 }
 
 // SessionDrilldown 会话下钻结果：缓存命中率 KPI + 会话聚合列表（全量，按 token 降序；
@@ -196,6 +218,7 @@ type SessionDrilldown struct {
 	InputTokens  int           `json:"inputTokens"`  // 窗口内输入侧总量（含缓存命中部分）
 	CacheTokens  int           `json:"cacheTokens"`  // 窗口内缓存命中 token
 	CacheHitRate float64       `json:"cacheHitRate"` // 缓存命中率 %（cache / input × 100；无输入为 0）
+	Cost         float64       `json:"cost"`         // 窗口内金额合计（元）
 	Sessions     []SessionStat `json:"sessions"`     // 按 token 降序
 }
 
@@ -205,12 +228,16 @@ func (s *Stats) SessionDrilldown(days int) SessionDrilldown {
 	r := RangeForDays(days)
 	in := filterRequestLogs(s.store.ListRequestLogs(), r)
 	d := SessionDrilldown{Days: days}
+	pt := s.priceTable()
 	m := map[string]*SessionStat{}
 	titles := ClientSessionTitles() // 本机会话标题（5 分钟缓存；查不到回退展示 session_id）
 	for _, l := range in {
 		inputTotal := l.InputTokens + l.CacheTokens
 		d.InputTokens += inputTotal
 		d.CacheTokens += l.CacheTokens
+		if cost, priced := pt.Cost(l.Model, l.InputTokens, l.OutputTokens, l.CacheTokens, 0); priced {
+			d.Cost += cost
+		}
 		if l.SessionID == "" {
 			continue
 		}
@@ -224,6 +251,9 @@ func (s *Stats) SessionDrilldown(days int) SessionDrilldown {
 		sess.InputTokens += l.InputTokens
 		sess.OutputTokens += l.OutputTokens
 		sess.CacheTokens += l.CacheTokens
+		if cost, priced := pt.Cost(l.Model, l.InputTokens, l.OutputTokens, l.CacheTokens, 0); priced {
+			sess.Cost += cost
+		}
 		if l.Status >= 400 {
 			sess.Errors++
 		}
@@ -237,22 +267,35 @@ func (s *Stats) SessionDrilldown(days int) SessionDrilldown {
 	if d.InputTokens > 0 {
 		d.CacheHitRate = round2(float64(d.CacheTokens) / float64(d.InputTokens) * 100)
 	}
+	d.Cost = round4(d.Cost)
 	for _, sess := range m {
+		sess.Cost = round4(sess.Cost)
 		d.Sessions = append(d.Sessions, *sess)
 	}
 	sort.Slice(d.Sessions, func(i, j int) bool { return d.Sessions[i].Tokens > d.Sessions[j].Tokens })
 	return d
 }
 
+// RequestLogCost 请求明细行 + 按当前单价表换算的金额（仅下钻视图使用，不落盘：
+// 落盘的是 token 事实，金额随单价表变动，不是历史账本）。
+type RequestLogCost struct {
+	RequestLog
+	Cost   float64 `json:"cost"`
+	Priced bool    `json:"priced"` // false = 该模型未定价，Cost 恒为 0
+}
+
 // SessionRequests 单个会话的请求明细（时间升序），供下钻第三级展示。
-func (s *Stats) SessionRequests(sessionID string, days int) []RequestLog {
+func (s *Stats) SessionRequests(sessionID string, days int) []RequestLogCost {
 	r := RangeForDays(days)
 	in := filterRequestLogs(s.store.ListRequestLogs(), r)
-	var out []RequestLog
+	pt := s.priceTable()
+	var out []RequestLogCost
 	for _, l := range in {
-		if l.SessionID == sessionID {
-			out = append(out, l)
+		if l.SessionID != sessionID {
+			continue
 		}
+		cost, priced := pt.Cost(l.Model, l.InputTokens, l.OutputTokens, l.CacheTokens, 0)
+		out = append(out, RequestLogCost{RequestLog: l, Cost: round4(cost), Priced: priced})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TS < out[j].TS })
 	return out
@@ -326,16 +369,28 @@ func filterRequestLogs(logs []RequestLog, r Range) []RequestLog {
 	return out
 }
 
-func (s *Stats) overview(in []RequestLog, tasks []TaskLog, r Range) Overview {
+func (s *Stats) overview(in []RequestLog, tasks []TaskLog, r Range, pt PriceTable) Overview {
 	o := Overview{}
 	lat, first, sizes := []float64{}, []float64{}, []float64{}
 	sessions := map[string]struct{}{}
+	unpriced := map[string]struct{}{} // 窗口内无单价的模型（金额分母口径须透明）
+	dayCost := map[string]float64{}   // 逐日金额，供今日 / 日均口径
 	for _, l := range in {
 		o.Requests++
 		o.Tokens += l.Tokens
 		o.InputTokens += l.InputTokens
 		o.OutputTokens += l.OutputTokens
 		o.CacheTokens += l.CacheTokens
+		// 网关口径：InputTokens 不含缓存命中，缓存单列；缓存写未观测传 0
+		cost, priced := pt.Cost(l.Model, l.InputTokens, l.OutputTokens, l.CacheTokens, 0)
+		if priced {
+			o.Cost += cost
+			dayCost[dayKey(l.TS)] += cost
+		} else if l.Tokens > 0 {
+			// 只统计真有 token 用量的未定价模型：鉴权失败等 0 token 记录
+			//（model 为空）不构成计价缺口，计入会让「未定价」名单出现幻影条目
+			unpriced[l.Model] = struct{}{}
+		}
 		if l.Status >= 400 {
 			o.Errors++
 		}
@@ -382,9 +437,11 @@ func (s *Stats) overview(in []RequestLog, tasks []TaskLog, r Range) Overview {
 	}
 	today := dayKey(time.Now().Unix())
 	total := 0
+	costTotal := 0.0
 	activeDays := 0
 	for k, p := range byDay {
 		total += p.Tokens
+		costTotal += dayCost[k]
 		if p.Requests > 0 {
 			activeDays++
 		}
@@ -395,12 +452,16 @@ func (s *Stats) overview(in []RequestLog, tasks []TaskLog, r Range) Overview {
 		if k == today {
 			o.TodayTokens = p.Tokens
 			o.TodayRequests = p.Requests
+			o.TodayCost = round4(dayCost[k])
 		}
 	}
 	o.Days = activeDays
 	if activeDays > 0 {
 		o.AvgPerDay = round2(float64(total) / float64(activeDays))
+		o.AvgCostPerDay = round4(costTotal / float64(activeDays))
 	}
+	o.Cost = round4(o.Cost)
+	o.UnpricedModels = len(unpriced)
 	if logs := s.store.ListRequestLogs(); len(logs) > 0 {
 		o.FirstTS = logs[len(logs)-1].TS
 		o.LastTS = logs[0].TS
@@ -425,7 +486,7 @@ func (s *Stats) overview(in []RequestLog, tasks []TaskLog, r Range) Overview {
 	return o
 }
 
-func dailyTrend(in []RequestLog, days int) []TrendPoint {
+func dailyTrend(in []RequestLog, days int, pt PriceTable) []TrendPoint {
 	byDay := map[string]*TrendPoint{}
 	latSum := map[string]float64{}
 	for _, l := range in {
@@ -440,6 +501,9 @@ func dailyTrend(in []RequestLog, days int) []TrendPoint {
 		p.InputTokens += l.InputTokens
 		p.OutputTokens += l.OutputTokens
 		p.CacheTokens += l.CacheTokens
+		if cost, priced := pt.Cost(l.Model, l.InputTokens, l.OutputTokens, l.CacheTokens, 0); priced {
+			p.Cost += cost
+		}
 		if l.Status >= 400 {
 			p.Errors++
 		}
@@ -460,12 +524,13 @@ func dailyTrend(in []RequestLog, days int) []TrendPoint {
 		} else if p.AvgLatency > 0 {
 			p.AvgLatency = round2(latSum[key] / p.AvgLatency)
 		}
+		p.Cost = round4(p.Cost)
 		out = append(out, *p)
 	}
 	return out
 }
 
-func modelStats(in []RequestLog) []ModelStat {
+func modelStats(in []RequestLog, pt PriceTable) []ModelStat {
 	type acc struct {
 		stat  ModelStat
 		lat   []float64
@@ -487,6 +552,10 @@ func modelStats(in []RequestLog) []ModelStat {
 		a.stat.InputTokens += l.InputTokens
 		a.stat.OutputTokens += l.OutputTokens
 		a.stat.CacheTokens += l.CacheTokens
+		if cost, priced := pt.Cost(l.Model, l.InputTokens, l.OutputTokens, l.CacheTokens, 0); priced {
+			a.stat.Cost += cost
+			a.stat.Priced = true
+		}
 		if l.Status >= 400 {
 			a.stat.Errors++
 		}
@@ -511,13 +580,14 @@ func modelStats(in []RequestLog) []ModelStat {
 		}
 		a.stat.TokenP50 = percentile(a.sizes, 50)
 		a.stat.TokenP90 = percentile(a.sizes, 90)
+		a.stat.Cost = round4(a.stat.Cost)
 		out = append(out, a.stat)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Tokens > out[j].Tokens })
 	return out
 }
 
-func keyStats(in []RequestLog) []KeyStat {
+func keyStats(in []RequestLog, pt PriceTable) []KeyStat {
 	m := map[string]*KeyStat{}
 	for _, l := range in {
 		id := l.KeyID
@@ -534,6 +604,9 @@ func keyStats(in []RequestLog) []KeyStat {
 		}
 		k.Requests++
 		k.Tokens += l.Tokens
+		if cost, priced := pt.Cost(l.Model, l.InputTokens, l.OutputTokens, l.CacheTokens, 0); priced {
+			k.Cost += cost
+		}
 		if l.Status >= 400 {
 			k.Errors++
 		}
@@ -546,6 +619,7 @@ func keyStats(in []RequestLog) []KeyStat {
 		if k.Requests > 0 {
 			k.AvgLatency = round2(k.AvgLatency / float64(k.Requests))
 		}
+		k.Cost = round4(k.Cost)
 		out = append(out, *k)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Tokens > out[j].Tokens })

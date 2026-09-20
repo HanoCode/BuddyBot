@@ -62,4 +62,18 @@ export const en: Record<string, string> = {
   "P50 {a} · P90 {b} · 均 {c}": "P50 {a} · P90 {b} · avg {c}",
   "搜索会话 / 标题 / 密钥": "Search sessions / titles / keys",
   "标题来自本机客户端会话（查无标题时显示 session_id）": "Titles from local client sessions (falls back to session_id when unavailable)",
+  // ---- 金额（按模型单价表把 token 换算成人民币） ----
+  "合计金额": "Total cost",
+  "日均金额": "Daily avg cost",
+  "计价覆盖": "Priced models",
+  "金额": "Cost",
+  "未定价": "No price",
+  "按模型单价表换算 · 元 / 百万 token": "Converted with the model price table · CNY per million tokens",
+  "{a} 个模型未定价，未计入金额": "{a} model(s) have no price, excluded from cost",
+  "窗口内模型均已定价": "All models in window are priced",
+  "按活跃 {a} 天折算": "Averaged over {a} active day(s)",
+  "合计 {a}": "Total {a}",
+  "（{a} 个模型未定价，未计入）": " ({a} model(s) unpriced, excluded)",
+  "以下模型未配置单价，其用量未计入金额：{a}。到「设置 → 提示词与模型 → 模型单价」填写后金额才会完整。":
+    "The following models have no price configured, so their usage is excluded from cost: {a}. Fill them in under Settings → Prompts & Models → Model prices.",
 };

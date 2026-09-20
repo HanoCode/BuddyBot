@@ -26,6 +26,9 @@ const HEAT_D = ["#262B36", "#2C3847", "#33455A", "#3B536E", "#446182", "#4F7096"
 const fmtTok = (v: number) =>
   v >= 1e9 ? (v / 1e9).toFixed(2) + "B" : v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : v >= 1e3 ? (v / 1e3).toFixed(1) + "K" : String(v);
 
+// 金额（元）：≥1 元保留 2 位；小额保留 4 位，避免零星用量被抹成 ¥0.00
+const fmtMoney = (v: number) => "¥" + (v >= 1 ? v.toFixed(2) : v.toFixed(4));
+
 export default function ClientTokens() {
   const t = useT();
   const [days, setDays] = useState(7);
@@ -77,13 +80,21 @@ export default function ClientTokens() {
   const topProjects = useMemo(() => (s?.projects ?? []).slice(0, 8), [s]);
 
   const missing = (s?.sources ?? []).filter((x) => x.missing);
+  // 计价覆盖与未定价名单都基于「真有 token 用量」的模型（与后端 unpricedModels 同口径）
+  const billedModels = useMemo(() => (s?.models ?? []).filter((m) => m.totalTokens > 0), [s]);
+  const unpricedList = useMemo(() => billedModels.filter((m) => !m.priced).map((m) => m.model), [billedModels]);
+  const pricedCount = billedModels.length - unpricedList.length;
 
   return (
     <section className="page">
       <div className="page-head">
         <div>
           <h1>{t("客户端消耗")}</h1>
-          <p>{t("WorkBuddy 客户端自身消耗（本机会话日志聚合，不经网关）· 与「Token 消耗」的网关口径并列")}</p>
+          <p>
+            {t("WorkBuddy 客户端自身消耗（本机会话日志聚合，不经网关）· 与「Token 消耗」的网关口径并列")}
+            <br />
+            {t("金额按「设置 → 模型单价」换算")}
+          </p>
         </div>
         <div className="head-actions">
           <div className="seg">
@@ -122,6 +133,16 @@ export default function ClientTokens() {
             </div>
           )}
 
+          {unpricedList.length > 0 && (
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div className="card-b" style={{ padding: "10px 14px" }}>
+                <span className="muted">
+                  {t("以下模型未配置单价，其用量未计入金额：{a}。到「设置 → 提示词与模型 → 模型单价」填写后金额才会完整。", { a: unpricedList.join("、") })}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="kpis7">
             {[
               { k: t("合计 Token"), v: fmtTok(s.summary.totalTokens), s: t("{a} 条 AI 调用记录", { a: s.summary.records }) },
@@ -135,6 +156,21 @@ export default function ClientTokens() {
               <div className="card tok-kpi" key={x.k}>
                 <div className="k">{x.k}</div>
                 <div className="v">{x.v}<small>{x.u ?? ""}</small></div>
+                <div className="s">{x.s}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* 金额口径：按「设置 → 模型单价」把 token 换算成人民币，未定价模型一律不计入 */}
+          <div className="kpis3">
+            {[
+              { k: t("合计金额"), v: fmtMoney(s.summary.cost), u: "", s: t("按模型单价表换算 · 元 / 百万 token") },
+              { k: t("日均金额"), v: fmtMoney(s.summary.avgCostPerDay), u: "", s: t("按有调用的自然日折算") },
+              { k: t("计价覆盖"), v: String(pricedCount), u: `/${billedModels.length}`, s: unpricedList.length > 0 ? t("{a} 个模型未定价，未计入金额", { a: unpricedList.length }) : t("窗口内模型均已定价") },
+            ].map((x) => (
+              <div className="card tok-kpi" key={x.k}>
+                <div className="k">{x.k}</div>
+                <div className="v">{x.v}<small>{x.u}</small></div>
                 <div className="s">{x.s}</div>
               </div>
             ))}
@@ -184,7 +220,7 @@ export default function ClientTokens() {
                         ];
                         let y = 148;
                         return (
-                          <g key={d.date} data-tip={`${d.date} · ${fmtTok(d.totalTokens)} token · ${d.records} 次`}>
+                          <g key={d.date} data-tip={`${d.date} · ${fmtTok(d.totalTokens)} token · ${fmtMoney(d.cost)} · ${d.records} 次`}>
                             {segs.map((seg, si) => {
                               if (seg.v <= 0) return null;
                               const h = Math.max(1, scale(seg.v));
@@ -221,7 +257,7 @@ export default function ClientTokens() {
                             {m.model}
                           </span>
                           <span className="meta">{t("{a} 次", { a: m.records })}</span>
-                          <span className="num">{fmtTok(m.totalTokens)}</span>
+                          <span className="num">{fmtTok(m.totalTokens)}<small>{m.priced ? fmtMoney(m.cost) : t("未定价")}</small></span>
                           <span className="bar"><i style={{ width: `${Math.min(100, share * 100)}%`, background: m.color }} /></span>
                         </div>
                       );
@@ -290,7 +326,7 @@ export default function ClientTokens() {
                             {p.project}
                           </span>
                           <span className="meta">{t("{a} 次", { a: p.records })}</span>
-                          <span className="num">{fmtTok(p.totalTokens)}</span>
+                          <span className="num">{fmtTok(p.totalTokens)}<small>{fmtMoney(p.cost)}</small></span>
                           <span className="bar"><i style={{ width: `${Math.min(100, share * 100)}%`, background: MODEL_COLORS[2] }} /></span>
                         </div>
                       );
@@ -310,7 +346,7 @@ export default function ClientTokens() {
                       <thead>
                         <tr>
                           <th>{t("会话")}</th><th>{t("项目")}</th><th>{t("来源")}</th>
-                          <th>{t("调用")}</th><th>{t("Token")}</th><th>{t("最后活跃")}</th>
+                          <th>{t("调用")}</th><th>{t("Token")}</th><th>{t("金额")}</th><th>{t("最后活跃")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -323,11 +359,12 @@ export default function ClientTokens() {
                             <td><span className="chip">{sess.source === "workbuddy-ai" ? "AI" : "CN"}</span></td>
                             <td className="num">{sess.records}</td>
                             <td className="num">{fmtTok(sess.totalTokens)}</td>
+                            <td className="num" style={{ color: "var(--text-2)" }}>{fmtMoney(sess.cost)}</td>
                             <td className="muted">{sess.lastTs > 0 ? new Date(sess.lastTs * 1000).toLocaleString() : "—"}</td>
                           </tr>
                         ))}
                         {(s.sessions ?? []).length === 0 && (
-                          <tr><td colSpan={6}><EmptyBlock title={t("暂无会话记录")} /></td></tr>
+                          <tr><td colSpan={7}><EmptyBlock title={t("暂无会话记录")} /></td></tr>
                         )}
                       </tbody>
                     </table>

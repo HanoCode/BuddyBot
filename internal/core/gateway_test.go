@@ -201,7 +201,7 @@ func TestStatsAggregation(t *testing.T) {
 	store.AppendRequestLog(RequestLog{TS: base + 60, Time: Now(), KeyID: "k1", KeyName: "k1", Model: "glm-5.2", Status: 200, Tokens: 200, InputTokens: 150, OutputTokens: 50, Latency: 300, SessionID: "s1"})
 	store.AppendRequestLog(RequestLog{TS: base + 120, Time: Now(), KeyID: "k2", KeyName: "k2", Model: "kimi-k2.7", Status: 429, Tokens: 0, Latency: 20, SessionID: "s2"})
 
-	stats := NewStats(store, func() []Account { return nil })
+	stats := NewStats(store, func() []Account { return nil }, nil)
 	d := stats.Dashboard(7)
 
 	if d.Overview.Requests != 3 || d.Overview.Tokens != 300 {

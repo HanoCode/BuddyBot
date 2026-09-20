@@ -329,10 +329,7 @@ func (l *LogsAPI) OpenExportDir(ctx context.Context) (string, error) {
 }
 
 func exportDir() (string, error) {
-	dir := "data/exports"
-	if base, err := os.UserConfigDir(); err == nil {
-		dir = filepath.Join(base, "workbuddy-desktop", "exports")
-	}
+	dir := filepath.Join(core.AppDir(), "exports")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

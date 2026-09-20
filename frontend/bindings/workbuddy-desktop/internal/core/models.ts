@@ -231,6 +231,11 @@ export interface ClientUsageDay {
     "cacheWrite": number;
 
     /**
+     * 按单价表换算的金额（元）
+     */
+    "cost": number;
+
+    /**
      * 日活分布：当日有 AI 调用的去重会话数 / 项目数
      */
     "activeSessions": number;
@@ -244,6 +249,16 @@ export interface ClientUsageModel {
     "model": string;
     "records": number;
     "totalTokens": number;
+
+    /**
+     * 按单价表换算的金额（元）
+     */
+    "cost": number;
+
+    /**
+     * 该模型是否已配单价（false = 未定价，Cost 恒为 0）
+     */
+    "priced": boolean;
 }
 
 /**
@@ -253,6 +268,11 @@ export interface ClientUsageProject {
     "project": string;
     "records": number;
     "totalTokens": number;
+
+    /**
+     * 按单价表换算的金额（元）
+     */
+    "cost": number;
 }
 
 /**
@@ -269,6 +289,11 @@ export interface ClientUsageSession {
     "project": string;
     "records": number;
     "totalTokens": number;
+
+    /**
+     * 按单价表换算的金额（元）
+     */
+    "cost": number;
 
     /**
      * Unix 秒
@@ -300,6 +325,15 @@ export interface ClientUsageSummary {
      * cacheRead / input × 100
      */
     "cacheHitRate": number;
+
+    /**
+     * Cost 按单价表换算的金额（元）；未定价模型不计入，
+     * UnpricedModels 为窗口内出现过但没有单价的模型数（口径须对读者透明）；
+     * AvgCostPerDay 为活跃自然日的日均金额（与网关口径一致）
+     */
+    "cost": number;
+    "avgCostPerDay": number;
+    "unpricedModels": number;
 }
 
 export interface Config {
@@ -504,6 +538,11 @@ export interface KeyStat {
     "keyName": string;
     "requests": number;
     "tokens": number;
+
+    /**
+     * 按单价表换算的金额（元）
+     */
+    "cost": number;
     "errors": number;
     "avgLatency": number;
 }
@@ -530,6 +569,17 @@ export interface ModelInfo {
 }
 
 /**
+ * ModelPrice 单模型单价（元 / 百万 token）。字段为 0 表示该项免费；
+ * 模型未出现在单价表里表示未定价。
+ */
+export interface ModelPrice {
+    "input": number;
+    "output": number;
+    "cacheRead": number;
+    "cacheWrite": number;
+}
+
+/**
  * ModelStat 单模型聚合
  */
 export interface ModelStat {
@@ -543,6 +593,16 @@ export interface ModelStat {
      * 上游 usage 命中缓存的输入 token
      */
     "cacheTokens": number;
+
+    /**
+     * 按单价表换算的金额（元）
+     */
+    "cost": number;
+
+    /**
+     * 该模型是否已配单价（false = 未定价，Cost 恒为 0）
+     */
+    "priced": boolean;
     "errors": number;
     "avgLatency": number;
     "p50": number;
@@ -562,7 +622,7 @@ export interface ModelStat {
 }
 
 /**
- * ModelsConfig 模型中心：别名映射 / 积分倍率 / 分组
+ * ModelsConfig 模型中心：别名映射 / 积分倍率 / 分组 / 单价表
  */
 export interface ModelsConfig {
     /**
@@ -579,6 +639,13 @@ export interface ModelsConfig {
      * 模型 → 分组名（展示用）
      */
     "groups": { [_ in string]?: string } | null;
+
+    /**
+     * Prices 单价表：模型名 → 四类 token 单价（元 / 百万 token），
+     * 供「Token 消耗」「客户端消耗」两页把 token 换算成金额；
+     * 未配置的模型一律标注「未定价」，不做任何默认价兜底。
+     */
+    "prices": { [_ in string]?: ModelPrice } | null;
 }
 
 /**
@@ -689,6 +756,14 @@ export interface Overview {
     "inputTokens": number;
     "outputTokens": number;
     "cacheTokens": number;
+
+    /**
+     * Cost 窗口内金额（元）；TodayCost 今日金额；UnpricedModels 是窗口内出现过、
+     * 但没有单价的模型数——它们不计入 Cost，前端须如实标注，避免读者把金额当全集。
+     */
+    "cost": number;
+    "todayCost": number;
+    "unpricedModels": number;
     "errors": number;
     "successRate": number;
     "avgLatency": number;
@@ -699,6 +774,11 @@ export interface Overview {
     "sessions": number;
     "days": number;
     "avgPerDay": number;
+
+    /**
+     * 活跃自然日的日均金额（元）
+     */
+    "avgCostPerDay": number;
     "peakDate": string;
     "peakTokens": number;
     "todayTokens": number;
@@ -805,6 +885,52 @@ export interface RequestLog {
     "sessionId": string;
     "stream": boolean;
     "error"?: string;
+}
+
+/**
+ * RequestLogCost 请求明细行 + 按当前单价表换算的金额（仅下钻视图使用，不落盘：
+ * 落盘的是 token 事实，金额随单价表变动，不是历史账本）。
+ */
+export interface RequestLogCost {
+    "id": string;
+
+    /**
+     * Unix 秒，聚合口径
+     */
+    "ts": number;
+    "time": string;
+    "keyName": string;
+    "keyId": string;
+    "model": string;
+    "status": number;
+    "tokens": number;
+    "inputTokens": number;
+    "outputTokens": number;
+
+    /**
+     * 上游 usage 命中的缓存 token（未报为 0）
+     */
+    "cacheTokens"?: number;
+
+    /**
+     * 总耗时 ms
+     */
+    "latency": number;
+
+    /**
+     * 首字节耗时 ms
+     */
+    "firstLatency": number;
+    "ip": string;
+    "sessionId": string;
+    "stream": boolean;
+    "error"?: string;
+    "cost": number;
+
+    /**
+     * false = 该模型未定价，Cost 恒为 0
+     */
+    "priced": boolean;
 }
 
 /**
@@ -938,6 +1064,11 @@ export interface SessionDrilldown {
     "cacheHitRate": number;
 
     /**
+     * 窗口内金额合计（元）
+     */
+    "cost": number;
+
+    /**
      * 按 token 降序
      */
     "sessions": SessionStat[] | null;
@@ -963,6 +1094,11 @@ export interface SessionStat {
     "inputTokens": number;
     "outputTokens": number;
     "cacheTokens": number;
+
+    /**
+     * 按单价表换算的金额（元）
+     */
+    "cost": number;
     "errors": number;
 }
 
@@ -1239,6 +1375,11 @@ export interface TrendPoint {
      * 上游 usage 命中缓存的输入 token
      */
     "cacheTokens": number;
+
+    /**
+     * 按单价表换算的金额（元）；未定价模型不计入
+     */
+    "cost": number;
     "errors": number;
     "avgLatency": number;
 }

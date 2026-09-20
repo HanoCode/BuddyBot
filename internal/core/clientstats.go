@@ -43,17 +43,24 @@ type ClientUsageSummary struct {
 	CacheRead    int     `json:"cacheRead"`
 	CacheWrite   int     `json:"cacheWrite"`
 	CacheHitRate float64 `json:"cacheHitRate"` // cacheRead / input × 100
+	// Cost 按单价表换算的金额（元）；未定价模型不计入，
+	// UnpricedModels 为窗口内出现过但没有单价的模型数（口径须对读者透明）；
+	// AvgCostPerDay 为活跃自然日的日均金额（与网关口径一致）
+	Cost           float64 `json:"cost"`
+	AvgCostPerDay  float64 `json:"avgCostPerDay"`
+	UnpricedModels int     `json:"unpricedModels"`
 }
 
 // ClientUsageDay 单日聚合
 type ClientUsageDay struct {
-	Date         string `json:"date"` // MM-DD
-	Records      int    `json:"records"`
-	TotalTokens  int    `json:"totalTokens"`
-	InputTokens  int    `json:"inputTokens"`
-	OutputTokens int    `json:"outputTokens"`
-	CacheRead    int    `json:"cacheRead"`
-	CacheWrite   int    `json:"cacheWrite"`
+	Date         string  `json:"date"` // MM-DD
+	Records      int     `json:"records"`
+	TotalTokens  int     `json:"totalTokens"`
+	InputTokens  int     `json:"inputTokens"`
+	OutputTokens int     `json:"outputTokens"`
+	CacheRead    int     `json:"cacheRead"`
+	CacheWrite   int     `json:"cacheWrite"`
+	Cost         float64 `json:"cost"` // 按单价表换算的金额（元）
 	// 日活分布：当日有 AI 调用的去重会话数 / 项目数
 	ActiveSessions int `json:"activeSessions"`
 	ActiveProjects int `json:"activeProjects"`
@@ -61,28 +68,32 @@ type ClientUsageDay struct {
 
 // ClientUsageModel 单模型聚合
 type ClientUsageModel struct {
-	Model       string `json:"model"`
-	Records     int    `json:"records"`
-	TotalTokens int    `json:"totalTokens"`
+	Model       string  `json:"model"`
+	Records     int     `json:"records"`
+	TotalTokens int     `json:"totalTokens"`
+	Cost        float64 `json:"cost"`   // 按单价表换算的金额（元）
+	Priced      bool    `json:"priced"` // 该模型是否已配单价（false = 未定价，Cost 恒为 0）
 }
 
 // ClientUsageProject 单项目聚合
 type ClientUsageProject struct {
-	Project     string `json:"project"`
-	Records     int    `json:"records"`
-	TotalTokens int    `json:"totalTokens"`
+	Project     string  `json:"project"`
+	Records     int     `json:"records"`
+	TotalTokens int     `json:"totalTokens"`
+	Cost        float64 `json:"cost"` // 按单价表换算的金额（元）
 }
 
 // ClientUsageSession 单会话聚合
 type ClientUsageSession struct {
-	SessionID   string `json:"sessionId"`
-	Source      string `json:"source"` // workbuddy / workbuddy-ai
-	Title       string `json:"title"`
-	Project     string `json:"project"`
-	Records     int    `json:"records"`
-	TotalTokens int    `json:"totalTokens"`
-	FirstTS     int64  `json:"firstTs"` // Unix 秒
-	LastTS      int64  `json:"lastTs"`
+	SessionID   string  `json:"sessionId"`
+	Source      string  `json:"source"` // workbuddy / workbuddy-ai
+	Title       string  `json:"title"`
+	Project     string  `json:"project"`
+	Records     int     `json:"records"`
+	TotalTokens int     `json:"totalTokens"`
+	Cost        float64 `json:"cost"` // 按单价表换算的金额（元）
+	FirstTS     int64   `json:"firstTs"` // Unix 秒
+	LastTS      int64   `json:"lastTs"`
 }
 
 // ClientTokenSource 单数据源（国内/国际版）扫描结果
@@ -370,6 +381,23 @@ type clientStatsCache struct {
 
 var csCache clientStatsCache
 
+// invalidateClientStatsCache 丢弃客户端用量缓存：单价表随配置变更后，
+// 报告里的金额口径需立即重算，不吃 5 分钟旧缓存。
+func invalidateClientStatsCache() {
+	csCache.mu.Lock()
+	csCache.report = nil
+	csCache.mu.Unlock()
+}
+
+// clientUncached 客户端口径的「未命中输入」：日志里的 input 已含缓存读，
+// 计价前须扣除，否则同一批 token 会被输入价与缓存价重复计一次。
+func clientUncached(r clientRecord) int {
+	if r.in <= r.read {
+		return 0
+	}
+	return r.in - r.read
+}
+
 // ClientTokenStats 聚合 WorkBuddy 客户端自身最近 days 天的 token 消耗（带缓存）。
 // force = 跳过缓存重新扫描。目录缺失的档位如实标注 missing，不报错。
 func (s *Service) ClientTokenStats(days int, force bool) (*ClientTokenStats, error) {
@@ -433,13 +461,16 @@ func (s *Service) ClientTokenStats(days int, force bool) (*ClientTokenStats, err
 		models:     map[string]*ClientUsageModel{}, projects: map[string]*ClientUsageProject{}, sess: map[string]*ClientUsageSession{},
 	}
 
-	add := func(a *acc, r clientRecord, source, title string) {
+	add := func(a *acc, r clientRecord, cost float64, priced bool, source, title string) {
 		a.sum.Records++
 		a.sum.InputTokens += r.in
 		a.sum.OutputTokens += r.out
 		a.sum.CacheRead += r.read
 		a.sum.CacheWrite += r.write
 		a.sum.TotalTokens += r.in + r.out + r.write
+		if priced {
+			a.sum.Cost += cost
+		}
 		lt := time.Unix(r.ts, 0)
 		date := lt.Format("01-02")
 		d := a.daily[date]
@@ -453,6 +484,9 @@ func (s *Service) ClientTokenStats(days int, force bool) (*ClientTokenStats, err
 		d.CacheRead += r.read
 		d.CacheWrite += r.write
 		d.TotalTokens += r.in + r.out + r.write
+		if priced {
+			d.Cost += cost
+		}
 		ds := a.dailySess[date]
 		if ds == nil {
 			ds = map[string]struct{}{}
@@ -482,6 +516,10 @@ func (s *Service) ClientTokenStats(days int, force bool) (*ClientTokenStats, err
 		}
 		m.Records++
 		m.TotalTokens += r.in + r.out + r.write
+		if priced {
+			m.Cost += cost
+			m.Priced = true
+		}
 		p := a.projects[r.project]
 		if p == nil {
 			p = &ClientUsageProject{Project: r.project}
@@ -489,6 +527,9 @@ func (s *Service) ClientTokenStats(days int, force bool) (*ClientTokenStats, err
 		}
 		p.Records++
 		p.TotalTokens += r.in + r.out + r.write
+		if priced {
+			p.Cost += cost
+		}
 		sk := source + "|" + r.sessID
 		ds[sk] = struct{}{}
 		dp[r.project] = struct{}{}
@@ -500,6 +541,9 @@ func (s *Service) ClientTokenStats(days int, force bool) (*ClientTokenStats, err
 		}
 		sv.Records++
 		sv.TotalTokens += r.in + r.out + r.write
+		if priced {
+			sv.Cost += cost
+		}
 		if sv.FirstTS == 0 || r.ts < sv.FirstTS {
 			sv.FirstTS = r.ts
 		}
@@ -509,8 +553,11 @@ func (s *Service) ClientTokenStats(days int, force bool) (*ClientTokenStats, err
 	}
 
 	// 分源汇总（各自归因）+ 合计
+	pt := NewPriceTable(s.ModelPrices())
+	unpriced := map[string]struct{}{}
 	for i := range perSource {
 		sum := &perSource[i].src.Summary
+		srcUnpriced := map[string]struct{}{}
 		for _, r := range perSource[i].records {
 			sum.Records++
 			sum.InputTokens += r.in
@@ -518,21 +565,38 @@ func (s *Service) ClientTokenStats(days int, force bool) (*ClientTokenStats, err
 			sum.CacheRead += r.read
 			sum.CacheWrite += r.write
 			sum.TotalTokens += r.in + r.out + r.write
-			add(&all, r, perSource[i].src.Source, perSource[i].titles[r.sessID])
+			cost, priced := pt.Cost(r.model, clientUncached(r), r.out, r.read, r.write)
+			if priced {
+				sum.Cost += cost
+			} else if r.in+r.out+r.write > 0 {
+				// 与网关同口径：只统计真有 token 用量的未定价模型
+				srcUnpriced[r.model] = struct{}{}
+				unpriced[r.model] = struct{}{}
+			}
+			add(&all, r, cost, priced, perSource[i].src.Source, perSource[i].titles[r.sessID])
 		}
 		if sum.InputTokens > 0 {
 			sum.CacheHitRate = round2(float64(sum.CacheRead) / float64(sum.InputTokens) * 100)
 		}
+		sum.Cost = round4(sum.Cost)
+		sum.UnpricedModels = len(srcUnpriced)
 		rep.Sources = append(rep.Sources, perSource[i].src)
 	}
 
 	rep.Summary = all.sum
+	rep.Summary.Cost = round4(rep.Summary.Cost)
+	rep.Summary.UnpricedModels = len(unpriced)
+	// daily 只含真有记录的日期，其条数即活跃自然日数
+	if active := len(all.daily); active > 0 {
+		rep.Summary.AvgCostPerDay = round4(rep.Summary.Cost / float64(active))
+	}
 	if all.sum.InputTokens > 0 {
 		rep.Summary.CacheHitRate = round2(float64(all.sum.CacheRead) / float64(all.sum.InputTokens) * 100)
 	}
 	for _, d := range all.daily {
 		d.ActiveSessions = len(all.dailySess[d.Date])
 		d.ActiveProjects = len(all.dailyProj[d.Date])
+		d.Cost = round4(d.Cost)
 		rep.Daily = append(rep.Daily, *d)
 		// 日历热力图行（与 Daily 同序构建，保持对齐）
 		row := make([]int, 72)
@@ -546,14 +610,17 @@ func (s *Service) ClientTokenStats(days int, force bool) (*ClientTokenStats, err
 	}
 	sort.Slice(rep.Daily, func(i, j int) bool { return rep.Daily[i].Date < rep.Daily[j].Date })
 	for _, m := range all.models {
+		m.Cost = round4(m.Cost)
 		rep.Models = append(rep.Models, *m)
 	}
 	sort.Slice(rep.Models, func(i, j int) bool { return rep.Models[i].TotalTokens > rep.Models[j].TotalTokens })
 	for _, p := range all.projects {
+		p.Cost = round4(p.Cost)
 		rep.Projects = append(rep.Projects, *p)
 	}
 	sort.Slice(rep.Projects, func(i, j int) bool { return rep.Projects[i].TotalTokens > rep.Projects[j].TotalTokens })
 	for _, sv := range all.sess {
+		sv.Cost = round4(sv.Cost)
 		rep.Sessions = append(rep.Sessions, *sv)
 	}
 	sort.Slice(rep.Sessions, func(i, j int) bool {

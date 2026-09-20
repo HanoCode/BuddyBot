@@ -11,11 +11,8 @@ import (
 // 单实例保护（macOS/Linux）：数据目录锁文件 + flock。
 // macOS 上关窗口隐藏到托盘，重复启动同样会造成网关端口冲突，行为与 Windows 一致。
 func AcquireSingleInstance() (ok bool) {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return true // 拿不到配置目录：不阻止启动
-	}
-	path := filepath.Join(base, "workbuddy-desktop", "buddybot.lock")
+	// 锁文件必须与 NewService 用同一个数据目录（EnsureAppDir 同一入口，顺带完成旧目录迁移）
+	path := filepath.Join(EnsureAppDir(), "buddybot.lock")
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {

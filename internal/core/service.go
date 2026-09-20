@@ -92,11 +92,15 @@ type PromptConfig struct {
 	Text string `json:"text"` // custom/append 使用的系统提示词
 }
 
-// ModelsConfig 模型中心：别名映射 / 积分倍率 / 分组
+// ModelsConfig 模型中心：别名映射 / 积分倍率 / 分组 / 单价表
 type ModelsConfig struct {
 	Aliases map[string]string  `json:"aliases"` // 客户端可见模型名 → 上游真实模型名
 	Rates   map[string]float64 `json:"rates"`   // 积分倍率：每 1k token 基准 1 分 × rate（0 = 免费）
 	Groups  map[string]string  `json:"groups"`  // 模型 → 分组名（展示用）
+	// Prices 单价表：模型名 → 四类 token 单价（元 / 百万 token），
+	// 供「Token 消耗」「客户端消耗」两页把 token 换算成金额；
+	// 未配置的模型一律标注「未定价」，不做任何默认价兜底。
+	Prices map[string]ModelPrice `json:"prices"`
 }
 
 // RedisConfig 可选状态镜像（Upstash REST）：会话粘性绑定 + 状态快照
@@ -193,6 +197,7 @@ type Service struct {
 	cancel     context.CancelFunc
 	config     *Config
 	configPath string
+	dataDir    string // 数据目录：配置里相对路径的解析基准（打包运行 CWD 为 /，不能依赖 CWD）
 	store      *Store
 	gateway    *Gateway
 	scheduler  *Scheduler
@@ -204,13 +209,9 @@ type Service struct {
 	flushStop  chan struct{} // 存储合并落盘协程停止信号
 }
 
-// NewService 创建服务（默认数据目录为用户配置目录下的 workbuddy-desktop）
+// NewService 创建服务（数据目录 ~/.buddybot，旧版本目录首次启动自动迁移）
 func NewService() *Service {
-	dir := "data"
-	if base, err := os.UserConfigDir(); err == nil {
-		dir = filepath.Join(base, "workbuddy-desktop")
-	}
-	return NewServiceAt(dir)
+	return NewServiceAt(EnsureAppDir())
 }
 
 // NewServiceAt 在指定目录创建服务（测试与自定义数据目录用）
@@ -219,6 +220,7 @@ func NewServiceAt(dir string) *Service {
 
 	s := &Service{
 		configPath: filepath.Join(dir, "config.json"),
+		dataDir:    dir,
 		config:     DefaultConfig(),
 		store:      NewStore(filepath.Join(dir, "store.json")),
 		tracker:    newInflightTracker(),
@@ -228,7 +230,7 @@ func NewServiceAt(dir string) *Service {
 	s.mirror = newRedisMirror()
 	s.mirror.configure(s.GetConfig().Redis)
 	s.gateway = NewGateway(s)
-	s.stats = NewStats(s.store, s.Accounts)
+	s.stats = NewStats(s.store, s.Accounts, s.ModelPrices)
 	s.scheduler = NewScheduler(s)
 	s.ApplyAwakeOnStart()
 	return s
@@ -268,7 +270,7 @@ func DefaultConfig() *Config {
 		Security:      SecurityConfig{RequireIPAllowlist: false, IPWhitelist: []string{}, IPBlacklist: []string{}},
 		SessionSticky: SessionConfig{Enabled: true, TTL: "30m"},
 		Prompt:        PromptConfig{Mode: "passthrough"},
-		Models:        ModelsConfig{Aliases: map[string]string{}, Rates: map[string]float64{}, Groups: map[string]string{}},
+		Models:        ModelsConfig{Aliases: map[string]string{}, Rates: map[string]float64{}, Groups: map[string]string{}, Prices: DefaultModelPrices()},
 		Redis:         RedisConfig{Enabled: false},
 		Inject:        InjectConfig{Port: 9223, DNDAutoConfirm: true, Theme: ThemeConfig{Mask: 30, TextShadow: true}},
 		SkillHub:      SkillHubConfig{CacheTTLMinutes: DefaultSkillHubCacheTTLMinutes},
@@ -398,6 +400,17 @@ func (s *Service) Accounts() []Account {
 	return BuildAccounts(LoadCredentials(s.GetConfig().AuthDir), s.store, s.tracker)
 }
 
+// ModelPrices 模型单价表（元 / 百万 token）：统计聚合把 token 换算成金额用。
+// 零值 Service（测试构造）没有配置，返回 nil（等价于全部未定价）。
+func (s *Service) ModelPrices() map[string]ModelPrice {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.config == nil {
+		return nil
+	}
+	return s.config.Models.Prices
+}
+
 // FindAccount 按 uid 查找账号
 func (s *Service) FindAccount(uid string) (Account, bool) {
 	for _, a := range s.Accounts() {
@@ -447,12 +460,15 @@ func (s *Service) GetConfig() *Config {
 // UpdateConfig 更新配置（先落盘，网关运行中则热重启生效）
 func (s *Service) UpdateConfig(c *Config) error {
 	s.mu.Lock()
+	s.normalizePaths(c)
 	s.config = c
 	s.mu.Unlock()
 	if err := s.SaveConfig(); err != nil {
 		return err
 	}
 	s.mirror.configure(c.Redis)
+	// 单价表随配置变更：客户端用量报告里的金额口径需立即重算，不能吃 5 分钟旧缓存
+	invalidateClientStatsCache()
 	if s.gateway.IsRunning() {
 		s.Restart()
 	} else {
@@ -465,6 +481,36 @@ func (s *Service) UpdateConfig(c *Config) error {
 // ConfigPath 配置文件路径（备份用）
 func (s *Service) ConfigPath() string { return s.configPath }
 
+// normalizePaths 把配置里的路径项锚定到数据目录（相对路径 + ~ 前缀）。
+//
+// 打包成 App 后双击启动时，进程 CWD 是 /（只读系统卷），相对路径 AuthDir 若按 CWD
+// 解析会得到 /auths，登录写凭证时 mkdir 报 "read-only file system" 而失败。
+func (s *Service) normalizePaths(cfg *Config) {
+	cfg.AuthDir = s.absDataPath(cfg.AuthDir)
+}
+
+// absDataPath 解析配置里的路径：支持 ~ 前缀，相对路径以数据目录为基准。
+func (s *Service) absDataPath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return p
+	}
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return p
+		}
+		p = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/"))
+	}
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	if s.dataDir == "" {
+		return p
+	}
+	return filepath.Join(s.dataDir, p)
+}
+
 // LoadConfig 从磁盘加载配置，文件不存在时写入默认配置。
 // 默认值先入再用文件覆盖：文件缺键时保留默认值（对齐 workbuddy2api 的 DefaultSchedule 语义）。
 func (s *Service) LoadConfig() error {
@@ -474,11 +520,18 @@ func (s *Service) LoadConfig() error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			s.mu.Lock()
+			s.normalizePaths(s.config)
+			s.mu.Unlock()
 			return s.SaveConfig()
 		}
 		return err
 	}
 	cfg := DefaultConfig()
+	// 单价表不做键级合并：json.Unmarshal 会往已存在的 map 里追加键，而 DefaultConfig
+	// 自带内置价表，若不清空，用户在设置页删掉的行会在下次启动复活。置 nil 后由
+	// 「文件给了非空表就以文件为准、没给才回落默认」的规则接管（见下方 len == 0 分支）。
+	cfg.Models.Prices = nil
 	if err := json.Unmarshal(data, cfg); err != nil {
 		// 配置文件损坏：改名保留现场，避免下次启动被默认配置悄悄覆盖
 		_ = os.Rename(path, path+".corrupt.bak")
@@ -544,6 +597,13 @@ func (s *Service) LoadConfig() error {
 	if cfg.Models.Groups == nil {
 		cfg.Models.Groups = map[string]string{}
 	}
+	// 单价表为空视为「未初始化」→ 补内置默认表（DefaultModelPrices），让金额开箱可用；
+	// 文件里给了非空表就完全以文件为准（删掉某几行不会被补回来）。
+	// 代价：把整表清空保存后，下次启动会重新补上默认价——要「不显示金额」请直接不看这两页，
+	// 而不是清空单价表（金额本来就是只读换算视图，不影响任何调用行为）。
+	if len(cfg.Models.Prices) == 0 {
+		cfg.Models.Prices = DefaultModelPrices()
+	}
 	if cfg.Inject.Port <= 0 || cfg.Inject.Port > 65535 {
 		cfg.Inject.Port = 9223
 	}
@@ -551,6 +611,7 @@ func (s *Service) LoadConfig() error {
 	if cfg.SkillHub.CacheTTLMinutes <= 0 {
 		cfg.SkillHub.CacheTTLMinutes = DefaultSkillHubCacheTTLMinutes
 	}
+	s.normalizePaths(cfg)
 	s.mu.Lock()
 	s.config = cfg
 	s.mu.Unlock()

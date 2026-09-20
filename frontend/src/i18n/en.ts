@@ -307,7 +307,7 @@ export const en: Record<string, string> = {
   "丢弃客户端 system，统一改用下方提示词": "Drop the client's system prompt and use the one below",
   "保留客户端 system，并在其后追加下方提示词": "Keep the client's system prompt and append the one below",
   "系统提示词三模式": "system-prompt three modes",
-  "别名映射 / 积分倍率 / 分组": "alias mapping / credit rates / groups",
+  "别名映射 / 积分倍率 / 分组 / 单价表": "alias mapping / credit rates / groups / price table",
   "系统提示词模式": "System Prompt Mode",
   "网关在转发请求时对 system 消息的统一处理策略": "How the gateway handles system messages when forwarding requests",
   "替换用系统提示词": "System Prompt (Replace)",
@@ -324,6 +324,14 @@ export const en: Record<string, string> = {
   "模型分组": "Model Groups",
   "模型名=分组名": "model=group",
   "纯展示用途，便于在模型列表中归类。": "for display only, to group models in the model list.",
+  "模型单价": "Model Prices",
+  "金额按「设置 → 模型单价」换算": "Amounts are converted with the model price table in Settings",
+  "已识别 {a} 个模型：{b}": "Recognized {a} model(s): {b}",
+  "尚未识别到任何单价行——每行须形如 模型名=输入,输出,缓存读,缓存写，格式不符的行会被忽略":
+    "No price line recognized yet — each line must look like model=input,output,cacheRead,cacheWrite; lines that do not match are ignored",
+  "模型名=输入,输出,缓存读,缓存写": "model=input,output,cache-read,cache-write",
+  "单位：元 / 百万 token，四项依次为未命中输入、输出、缓存读、缓存写（缺省列按 0 计）。已内置一份常用模型的初始单价（各厂官方价，2026-09-20 核对），可直接改；表里没有的模型一律标注「未定价」，不猜价、不拿默认价凑数。":
+    "Unit: CNY per million tokens; the four columns are uncached input, output, cache read, cache write (missing columns count as 0). A starter table for common models ships built in (official vendor prices, verified 2026-09-20) and is fully editable; models missing from the table are always labeled \"No price\" — no price is guessed or assumed.",
 
   // ---------- Settings（状态镜像） ----------
   "可选的 Upstash Redis 状态镜像（默认关闭）": "optional Upstash Redis state mirror (off by default)",

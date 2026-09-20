@@ -55,4 +55,16 @@ export const en: Record<string, string> = {
   "调用": "Calls",
   "最后活跃": "Last active",
   "暂无会话记录": "No session records",
+  // ---- 金额（按模型单价表把 token 换算成人民币） ----
+  "合计金额": "Total cost",
+  "日均金额": "Daily avg cost",
+  "计价覆盖": "Priced models",
+  "金额": "Cost",
+  "未定价": "No price",
+  "按模型单价表换算 · 元 / 百万 token": "Converted with the model price table · CNY per million tokens",
+  "按有调用的自然日折算": "Averaged over calendar days with usage",
+  "{a} 个模型未定价，未计入金额": "{a} model(s) have no price, excluded from cost",
+  "窗口内模型均已定价": "All models in window are priced",
+  "以下模型未配置单价，其用量未计入金额：{a}。到「设置 → 提示词与模型 → 模型单价」填写后金额才会完整。":
+    "The following models have no price configured, so their usage is excluded from cost: {a}. Fill them in under Settings → Prompts & Models → Model prices.",
 };

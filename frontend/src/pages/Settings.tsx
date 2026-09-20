@@ -14,7 +14,7 @@ import { getCloseBehavior, setCloseBehavior, type CloseBehavior } from "../hooks
 import { setLang, t, useLang, useT } from "../i18n";
 import type {
   AccountBackup, AwakeStatus, BackupItem, DataMigrationDiag, GatewayConfig, InjectConfig, InjectStatus,
-  SchedulerStatus, SystemInfo, UpdateInfo,
+  ModelPrice, SchedulerStatus, SystemInfo, UpdateInfo,
 } from "../types";
 
 // ============================================================
@@ -1071,17 +1071,56 @@ function textToNumMap(text: string): Record<string, number> {
   return out;
 }
 
+/**
+ * "模型名=输入,输出,缓存读,缓存写" 行 ↔ 单价表互转（单位：元 / 百万 token）。
+ * 缺省列按 0 计；列数不足或含负数/非数字的行整体忽略——不猜、不补建价格。
+ */
+function priceMapToText(map: Record<string, ModelPrice | undefined> | null | undefined): string {
+  return Object.entries(map ?? {})
+    .map(([k, v]) => `${k}=${v?.input ?? 0},${v?.output ?? 0},${v?.cacheRead ?? 0},${v?.cacheWrite ?? 0}`)
+    .join("\n");
+}
+
+/** 容忍全角标点与全角数字：中文输入法下打出的「＝」「，」「１２」不该让整行被静默丢弃。 */
+function normalizePriceText(s: string): string {
+  return s
+    .replace(/＝/g, "=")
+    .replace(/[，、]/g, ",")
+    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+}
+
+function textToPriceMap(text: string): Record<string, ModelPrice> {
+  const out: Record<string, ModelPrice> = {};
+  for (const line of text.split("\n")) {
+    const s = normalizePriceText(line).trim();
+    if (!s) continue;
+    const i = s.indexOf("=");
+    if (i <= 0) continue;
+    const key = s.slice(0, i).trim();
+    if (!key) continue;
+    const cols = s.slice(i + 1).split(",").map((c) => Number(c.trim()));
+    if (cols.some((n) => !Number.isFinite(n) || n < 0)) continue;
+    out[key] = {
+      input: cols[0] ?? 0,
+      output: cols[1] ?? 0,
+      cacheRead: cols[2] ?? 0,
+      cacheWrite: cols[3] ?? 0,
+    };
+  }
+  return out;
+}
+
 function PromptSection({ draft, setDraft }: { draft: GatewayConfig; setDraft: (c: GatewayConfig) => void }) {
   const t = useT();
   const pc = draft.prompt ?? { mode: "passthrough", text: "" };
-  const mc = draft.models ?? { aliases: {}, rates: {}, groups: {} };
+  const mc = draft.models ?? { aliases: {}, rates: {}, groups: {}, prices: {} };
 
   return (
     <div className="card set-group">
       <div className="card-h">
         <div>
           <h3>{t("提示词与模型")}</h3>
-          <div className="sub">prompt · {t("系统提示词三模式")} · models · {t("别名映射 / 积分倍率 / 分组")}</div>
+          <div className="sub">prompt · {t("系统提示词三模式")} · models · {t("别名映射 / 积分倍率 / 分组 / 单价表")}</div>
         </div>
       </div>
       <div className="card-b">
@@ -1152,6 +1191,29 @@ function PromptSection({ draft, setDraft }: { draft: GatewayConfig; setDraft: (c
             value={mapToText(mc.rates)}
             onChange={(e) => setDraft({ ...draft, models: { ...mc, rates: textToNumMap(e.target.value) } })}
           />
+        </div>
+
+        <div className="set-vert">
+          <div className="info">
+            <div className="t">{t("模型单价")}</div>
+            <div className="d">
+              {t("每行一条")} <code>{t("模型名=输入,输出,缓存读,缓存写")}</code>；
+              {t("单位：元 / 百万 token，四项依次为未命中输入、输出、缓存读、缓存写（缺省列按 0 计）。已内置一份常用模型的初始单价（各厂官方价，2026-09-20 核对），可直接改；表里没有的模型一律标注「未定价」，不猜价、不拿默认价凑数。")}
+            </div>
+          </div>
+          <textarea
+            className="input"
+            rows={4}
+            style={{ fontFamily: "var(--mono)", fontSize: 12.5 }}
+            placeholder={"hy3=1,4,0.25,0"}
+            value={priceMapToText(mc.prices)}
+            onChange={(e) => setDraft({ ...draft, models: { ...mc, prices: textToPriceMap(e.target.value) } })}
+          />
+          <div className="hint">
+            {Object.keys(mc.prices ?? {}).length > 0
+              ? t("已识别 {a} 个模型：{b}", { a: Object.keys(mc.prices ?? {}).length, b: Object.keys(mc.prices ?? {}).join("、") })
+              : t("尚未识别到任何单价行——每行须形如 模型名=输入,输出,缓存读,缓存写，格式不符的行会被忽略")}
+          </div>
         </div>
 
         <div className="set-vert">

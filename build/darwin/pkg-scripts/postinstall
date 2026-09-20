@@ -1,0 +1,11 @@
+#!/bin/bash
+# pkg 安装完成后清除应用上的 quarantine 隔离标记。
+# 背景：经浏览器/微信等渠道分发的 pkg 会带 com.apple.quarantine，
+#       installer 会把它传播到安装出的 .app 上，导致首次打开被
+#       Gatekeeper 拦截（"Apple无法验证"）。本项目为 ad-hoc 签名，
+#       无 Developer ID 公证，只能靠清标记绕开检查（与 WorkDaddy 一致：
+#       未签名但无 quarantine 的 app 不会被 Gatekeeper 检查）。
+# 注意：本脚本不能解决 pkg 自身被拦的问题——用户仍需对安装器
+#       「右键 → 打开」或在系统设置中允许一次。
+xattr -dr com.apple.quarantine /Applications/BuddyBot.app 2>/dev/null || true
+exit 0

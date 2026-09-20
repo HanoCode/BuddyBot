@@ -2,7 +2,8 @@
 #
 # 产物命名与 internal/api/system.go pickUpdateAsset 的匹配规则对应：
 #   BuddyBot-darwin-arm64.zip                  macOS .app 包（免安装拖入 Applications，应用内自动更新）
-#   BuddyBot-darwin-arm64-installer.pkg        macOS 安装器（双击安装到 /Applications）
+#   BuddyBot-darwin-arm64.dmg                  macOS 拖拽安装镜像（无安装脚本，quarantine 不自动清）
+#   BuddyBot-darwin-arm64-installer.pkg        macOS 安装器（双击安装到 /Applications，postinstall 自动清 quarantine）
 #   BuddyBot-windows-amd64.exe                 Windows 便携 exe（免安装，应用内自动更新，SignPath 签名）
 #   BuddyBot-windows-amd64-installer.exe       Windows NSIS 安装器（开始菜单/桌面快捷方式 + 卸载器）
 #   checksums.txt                              全部产物的 sha256（下载后强校验）
@@ -58,16 +59,25 @@ jobs:
         shell: bash
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
-      - name: Build macOS .app
+      - name: Build macOS .app / zip / dmg / pkg
         if: matrix.goos == 'darwin'
         run: |
           wails3 task darwin:package ARCH=${{ matrix.goarch }} APP_VERSION=${{ env.VERSION }}
           ditto -c -k --sequesterRsrc --keepParent \
             bin/BuddyBot.app "bin/BuddyBot-darwin-${{ matrix.goarch }}.zip"
-          # pkg 安装器：双击安装到 /Applications（未签名，首次打开需右键 → 打字确认）
+          # dmg 镜像（拖拽安装到 Applications）。注意：dmg 无安装脚本，经浏览器/
+          # 微信分发时镜像内 app 会带 quarantine，首次打开仍会被 Gatekeeper 拦；
+          # 免弹窗安装请用下面的 pkg（postinstall 自动清标记）。
+          wails3 task darwin:create:dmg APP_VERSION=${{ env.VERSION }}
+          mv bin/BuddyBot*.dmg "bin/BuddyBot-darwin-${{ matrix.goarch }}.dmg"
+          # pkg 安装器：双击安装到 /Applications（未签名）。pkg 自身首次打开需
+          # 「右键 → 打开」或在系统设置允许；装完后 postinstall 自动清除
+          # .app 上的 quarantine 标记，应用本体不再弹「Apple无法验证」。
+          chmod +x build/darwin/pkg-scripts/postinstall
           pkgbuild --component bin/BuddyBot.app \
             --install-location /Applications \
             --identifier app.buddybot.desktop \
+            --scripts build/darwin/pkg-scripts \
             "bin/BuddyBot-darwin-${{ matrix.goarch }}-installer.pkg"
 
       - name: Build Windows portable exe
@@ -116,6 +126,7 @@ jobs:
           name: assets-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             bin/BuddyBot-darwin-*.zip
+            bin/BuddyBot-darwin-*.dmg
             bin/BuddyBot-darwin-*.pkg
             bin/BuddyBot-windows-*.exe
           if-no-files-found: error

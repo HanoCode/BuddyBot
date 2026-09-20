@@ -5,7 +5,7 @@ import { useAsync } from "../hooks/useAsync";
 import { EVENT, onEvent } from "../services/events";
 import { toast } from "../components/common/Feedback";
 import { EmptyBlock, ErrorBlock, LoadingBlock } from "../components/common/StateBlock";
-import type { Dashboard, OfficialUsageReport, SessionDrilldown, RequestLog } from "../types";
+import type { Dashboard, OfficialUsageReport, SessionDrilldown, RequestLogCost } from "../types";
 import { useT } from "../i18n";
 
 const HEAT_L = ["#ECEFF4", "#DFE8F4", "#C7DAEF", "#ABC9E5", "#8CB2D8", "#6D97C6", "#4F79A9", "#35597F"];
@@ -22,6 +22,9 @@ const RANGES = [
 
 const fmtTok = (v: number) =>
   v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : v >= 1e3 ? (v / 1e3).toFixed(1) + "K" : String(v);
+
+// 金额（元）：≥1 元保留 2 位；小额保留 4 位，避免零星用量被抹成 ¥0.00
+const fmtMoney = (v: number) => "¥" + (v >= 1 ? v.toFixed(2) : v.toFixed(4));
 
 export default function Tokens() {
   const t = useT();
@@ -41,7 +44,7 @@ export default function Tokens() {
   const drill = useAsync<SessionDrilldown | null>(() => statsApi.sessionDrilldown(days), [days]);
   const [sessQuery, setSessQuery] = useState("");
   const [openSession, setOpenSession] = useState<string | null>(null);
-  const [sessionRows, setSessionRows] = useState<RequestLog[]>([]);
+  const [sessionRows, setSessionRows] = useState<RequestLogCost[]>([]);
   const [sessionLoading, setSessionLoading] = useState(false);
   const allSessions = drill.data?.sessions ?? [];
   const sessions = useMemo(() => {
@@ -99,6 +102,11 @@ export default function Tokens() {
 
   const ramp = typeof document !== "undefined" && document.documentElement.dataset.theme === "dark" ? HEAT_D : HEAT_L;
   const ov = dash.data?.overview;
+  // 计价覆盖与未定价名单都基于「真有 token 用量」的模型：0 token 的失败请求（model 为空）
+  // 不构成计价缺口，混进来会让名单出现幻影条目、也让 cover 分母失真
+  const billedModels = useMemo(() => (dash.data?.models ?? []).filter((m) => m.tokens > 0), [dash.data]);
+  const unpricedList = useMemo(() => billedModels.filter((m) => !m.priced).map((m) => m.model), [billedModels]);
+  const pricedCount = billedModels.length - unpricedList.length;
 
   const heatMax = useMemo(() => {
     let max = 0;
@@ -130,7 +138,11 @@ export default function Tokens() {
       <div className="page-head">
         <div>
           <h1>{t("Token 消耗")}</h1>
-          <p>{t("全部为网关记录的真实 usage 聚合 · 输入 / 输出 / 缓存按请求拆分裂算")}</p>
+          <p>
+            {t("全部为网关记录的真实 usage 聚合 · 输入 / 输出 / 缓存按请求拆分裂算")}
+            <br />
+            {t("金额按「设置 → 模型单价」换算")}
+          </p>
         </div>
         <div className="head-actions">
           <div className="seg">
@@ -198,6 +210,16 @@ export default function Tokens() {
         </div>
       )}
 
+      {unpricedList.length > 0 && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className="card-b" style={{ padding: "10px 14px" }}>
+            <span className="muted">
+              {t("以下模型未配置单价，其用量未计入金额：{a}。到「设置 → 提示词与模型 → 模型单价」填写后金额才会完整。", { a: unpricedList.join("、") })}
+            </span>
+          </div>
+        </div>
+      )}
+
       {dash.error && <ErrorBlock message={dash.error} onRetry={() => void dash.reload()} />}
       {!dash.settled && !dash.error && <LoadingBlock label={t("汇总统计")} />}
 
@@ -212,6 +234,21 @@ export default function Tokens() {
               { k: t("会话"), v: String(ov?.sessions ?? 0), u: "", s: t("按请求携带的 session_id 去重") },
               { k: t("成功率"), v: (ov?.successRate ?? 0).toFixed(1), u: "%", s: t("失败 {a} 次", { a: ov?.errors ?? 0 }) },
               { k: t("平均延迟"), v: (ov?.avgLatency ?? 0).toFixed(0), u: "ms", s: t("P90 {a}ms · P99 {b}ms", { a: (ov?.p90 ?? 0).toFixed(0), b: (ov?.p99 ?? 0).toFixed(0) }) },
+            ].map((x) => (
+              <div className="card tok-kpi" key={x.k}>
+                <div className="k">{x.k}</div>
+                <div className="v">{x.v}<small>{x.u}</small></div>
+                <div className="s">{x.s}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* 金额口径：按「设置 → 模型单价」把 token 换算成人民币，未定价模型一律不计入 */}
+          <div className="kpis3">
+            {[
+              { k: t("合计金额"), v: fmtMoney(ov?.cost ?? 0), u: "", s: t("按模型单价表换算 · 元 / 百万 token") },
+              { k: t("日均金额"), v: fmtMoney(ov?.avgCostPerDay ?? 0), u: "", s: t("按活跃 {a} 天折算", { a: ov?.days ?? 0 }) },
+              { k: t("计价覆盖"), v: String(pricedCount), u: `/${billedModels.length}`, s: unpricedList.length > 0 ? t("{a} 个模型未定价，未计入金额", { a: unpricedList.length }) : t("窗口内模型均已定价") },
             ].map((x) => (
               <div className="card tok-kpi" key={x.k}>
                 <div className="k">{x.k}</div>
@@ -254,7 +291,7 @@ export default function Tokens() {
                             <i style={{ width: 18, background: k.errors > 0 ? "var(--red)" : "var(--green)" }} data-tip={t("失败 {a} 次", { a: k.errors })} />
                             <i style={{ width: 18, background: ramp[lvl(k.tokens)] }} data-tip={t("{a} token", { a: fmtTok(k.tokens) })} />
                           </span>
-                          <span className="num">{fmtTok(k.tokens)}</span>
+                          <span className="num">{fmtTok(k.tokens)}<small>{fmtMoney(k.cost)}</small></span>
                           <span className="bar"><i style={{ width: `${Math.min(100, share * 100)}%`, background: MODEL_COLORS[i % MODEL_COLORS.length] }} /></span>
                         </div>
                       );
@@ -266,7 +303,11 @@ export default function Tokens() {
                             <i className="d" style={{ background: m.color }} />
                             <span>{m.model}</span>
                           </span>
-                          <span className="t">{t("{a} · {b} 次", { a: fmtTok(m.tokens), b: m.requests })}{m.errors > 0 ? t(" · 失败 {a}", { a: m.errors }) : ""}</span>
+                          <span className="t">
+                            {t("{a} · {b} 次", { a: fmtTok(m.tokens), b: m.requests })}
+                            {m.errors > 0 ? t(" · 失败 {a}", { a: m.errors }) : ""}
+                            {m.priced ? ` · ${fmtMoney(m.cost)}` : ` · ${t("未定价")}`}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -466,6 +507,7 @@ export default function Tokens() {
                     <div className="sub">
                       {t("密钥（调用方）→ 会话 → 请求 · 点击会话行展开请求明细")}
                       {` · ${t("标题来自本机客户端会话（查无标题时显示 session_id）")}`}
+                      {drill.data && ` · ${t("合计 {a}", { a: fmtMoney(drill.data.cost) })}${unpricedList.length > 0 ? t("（{a} 个模型未定价，未计入）", { a: unpricedList.length }) : ""}`}
                       {drill.data && drill.data.inputTokens > 0 &&
                         ` · ${t("缓存命中率 {a}%（{b} / {c}）", { a: drill.data.cacheHitRate.toFixed(1), b: fmtTok(drill.data.cacheTokens), c: fmtTok(drill.data.inputTokens) })}`}
                     </div>
@@ -491,7 +533,7 @@ export default function Tokens() {
                       <thead>
                         <tr>
                           <th>{t("会话")}</th><th>{t("密钥")}</th><th>{t("请求数")}</th>
-                          <th>{t("Token")}</th><th>{t("输入 / 输出 / 缓存")}</th><th>{t("失败")}</th><th>{t("最后活跃")}</th>
+                          <th>{t("Token")}</th><th>{t("金额")}</th><th>{t("输入 / 输出 / 缓存")}</th><th>{t("失败")}</th><th>{t("最后活跃")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -509,13 +551,14 @@ export default function Tokens() {
                               <td>{sess.keyName || "—"}</td>
                               <td className="num">{sess.requests}</td>
                               <td className="num">{fmtTok(sess.tokens)}</td>
+                              <td className="num" style={{ color: "var(--text-2)" }}>{fmtMoney(sess.cost)}</td>
                               <td className="num muted">{fmtTok(sess.inputTokens)} / {fmtTok(sess.outputTokens)} / {fmtTok(sess.cacheTokens)}</td>
                               <td className="num">{sess.errors > 0 ? <span style={{ color: "var(--red)" }}>{sess.errors}</span> : "0"}</td>
                               <td className="muted">{sess.lastTs > 0 ? new Date(sess.lastTs * 1000).toLocaleString() : "—"}</td>
                             </tr>
                             {openSession === sess.sessionId && (
                               <tr key={sess.sessionId + "-detail"}>
-                                <td colSpan={7} style={{ background: "var(--surface-2)" }}>
+                                <td colSpan={8} style={{ background: "var(--surface-2)" }}>
                                   {sessionLoading && <span className="muted">{t("加载明细…")}</span>}
                                   {!sessionLoading && (sessionRows ?? []).length === 0 && <span className="muted">{t("无请求明细")}</span>}
                                   {!sessionLoading && (sessionRows ?? []).length > 0 && (
@@ -523,7 +566,7 @@ export default function Tokens() {
                                       <thead>
                                         <tr>
                                           <th>{t("时间")}</th><th>{t("模型")}</th><th>{t("状态")}</th>
-                                          <th>{t("Token")}</th><th>{t("缓存")}</th><th>{t("延迟")}</th>
+                                          <th>{t("Token")}</th><th>{t("金额")}</th><th>{t("缓存")}</th><th>{t("延迟")}</th>
                                         </tr>
                                       </thead>
                                       <tbody>
@@ -533,6 +576,7 @@ export default function Tokens() {
                                             <td>{r.model || "—"}</td>
                                             <td className="num" style={{ color: r.status >= 400 ? "var(--red)" : "var(--green)" }}>{r.status}</td>
                                             <td className="num">{fmtTok(r.tokens)}</td>
+                                            <td className="num" style={{ color: "var(--text-2)" }}>{r.priced ? fmtMoney(r.cost) : t("未定价")}</td>
                                             <td className="num">{fmtTok(r.cacheTokens ?? 0)}</td>
                                             <td className="num">{r.latency.toFixed(0)}ms</td>
                                           </tr>
@@ -546,10 +590,10 @@ export default function Tokens() {
                           </Fragment>
                         ))}
                         {sessions.length === 0 && allSessions.length > 0 && (
-                          <tr><td colSpan={7}><EmptyBlock title={t("没有匹配的会话")} /></td></tr>
+                          <tr><td colSpan={8}><EmptyBlock title={t("没有匹配的会话")} /></td></tr>
                         )}
                         {allSessions.length === 0 && (
-                          <tr><td colSpan={7}><EmptyBlock title={t("窗口内没有携带 session_id 的请求")} /></td></tr>
+                          <tr><td colSpan={8}><EmptyBlock title={t("窗口内没有携带 session_id 的请求")} /></td></tr>
                         )}
                       </tbody>
                     </table>

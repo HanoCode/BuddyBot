@@ -58,7 +58,8 @@ export function SessionDrilldown(days: number): $CancellablePromise<core$0.Sessi
 
 /**
  * SessionRequests 单个会话的请求明细（时间升序），下钻第三级。
+ * 每行附带按当前单价表换算的金额（未定价模型 priced=false）。
  */
-export function SessionRequests(sessionID: string, days: number): $CancellablePromise<core$0.RequestLog[] | null> {
+export function SessionRequests(sessionID: string, days: number): $CancellablePromise<core$0.RequestLogCost[] | null> {
     return $Call.ByID(1971807603, sessionID, days);
 }

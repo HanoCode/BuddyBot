@@ -43,7 +43,7 @@ import type {
   OAuthPollResult,
   OfficialUsageReport,
   Overview,
-  RequestLog,
+  RequestLogCost,
   RequestLogPage,
   SessionDrilldown,
   DataMigrationDiag,
@@ -233,8 +233,8 @@ export const statsApi = {
   sessionDrilldown(days: number): Promise<SessionDrilldown | null> {
     return call(() => API.StatsAPI.SessionDrilldown(days));
   },
-  /** 单个会话的请求明细（时间升序） */
-  sessionRequests(sessionID: string, days: number): Promise<RequestLog[] | null> {
+  /** 单个会话的请求明细（时间升序；每行带按当前单价表换算的金额） */
+  sessionRequests(sessionID: string, days: number): Promise<RequestLogCost[] | null> {
     return call(() => API.StatsAPI.SessionRequests(sessionID, days));
   },
 };

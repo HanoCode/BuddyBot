@@ -186,6 +186,11 @@ func validateConfig(cfg *GatewayConfig) error {
 			return fmt.Errorf("模型 %s 的积分倍率不能为负", model)
 		}
 	}
+	for model, p := range cfg.Models.Prices {
+		if p.Input < 0 || p.Output < 0 || p.CacheRead < 0 || p.CacheWrite < 0 {
+			return fmt.Errorf("模型 %s 的单价不能为负（元 / 百万 token）", model)
+		}
+	}
 	return nil
 }
 

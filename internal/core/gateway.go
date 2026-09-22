@@ -322,6 +322,55 @@ type ChatMessage struct {
 	Content string `json:"content"`
 }
 
+// UnmarshalJSON 兼容 OpenAI content 的两种形态：纯字符串与 parts 数组。
+// PI-Desktop 等 agent 客户端把纯文本也编成 [{"type":"text","text":"..."}]，
+// 按 string 直解会 400「请求体不是合法 JSON」（2026-09-21 实测）。
+// 数组形态拼接全部 text 段为纯文本（上游按 string 形态转发）；null 视为空串。
+func (m *ChatMessage) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	m.Role = raw.Role
+	text, err := flattenTextContent(raw.Content)
+	if err != nil {
+		return err
+	}
+	m.Content = text
+	return nil
+}
+
+// flattenTextContent 归一 content：string 原样；parts 数组拼 text 段；
+// 其余形态（对象/数字）返回错误，维持 400 语义。
+func flattenTextContent(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, nil
+	}
+	var parts []json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return "", fmt.Errorf("content 应为字符串或 parts 数组")
+	}
+	var sb strings.Builder
+	for _, p := range parts {
+		var part struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(p, &part); err != nil || part.Type != "text" {
+			continue // 图片等非文本段当前不支持，忽略
+		}
+		sb.WriteString(part.Text)
+	}
+	return sb.String(), nil
+}
+
 func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	ip := clientIP(r)

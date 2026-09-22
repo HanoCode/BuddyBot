@@ -147,6 +147,11 @@ func DetectAgents(baseURL, apiKey string) []AgentTarget {
 		{id: "codex", name: "Codex CLI", path: first(codexConfigPath())},
 		{id: "opencode", name: "OpenCode", path: opencodeConfigPath()},
 		{id: "pi", name: "Pi Coding Agent", path: piModelsPath()},
+		{id: "pi-desktop", name: "PI-Desktop", path: piModelsPath(), altAny: []string{
+			"/Applications/PI-Desktop.app",
+			filepath.Join(agentHome(), "Applications", "PI-Desktop.app"),
+			filepath.Join(agentHome(), ".pi-desktop"),
+		}},
 		{id: "kimi-code", name: "Kimi Code", path: kimiCodeConfigPath()},
 		{id: "codebuddy", name: "CodeBuddy", path: codebuddyModelsPath()},
 		{id: "workbuddy", name: "WorkBuddy", path: workbuddyModelsPath()},
@@ -164,6 +169,14 @@ func DetectAgents(baseURL, apiKey string) []AgentTarget {
 		if !installed {
 			// 配置文件还没生成不代表没安装：目录存在即视为已安装
 			installed = pathExists(filepath.Dir(t.path))
+		}
+		if !installed {
+			for _, p := range t.altAny {
+				if pathExists(p) {
+					installed = true
+					break
+				}
+			}
 		}
 		configured := false
 		if installed {
@@ -188,6 +201,9 @@ func DetectAgents(baseURL, apiKey string) []AgentTarget {
 
 type agentRef struct {
 	id, name, path string
+	// altAny 安装探测的补充路径：配置文件尚未生成时，任一路径存在即视为已安装
+	// （PI-Desktop 装了但从未运行过时，~/.pi/agent 可能还不存在）
+	altAny []string
 }
 
 func first(a, _ string) string { return a }
@@ -213,7 +229,7 @@ func ApplyAgent(id, baseURL, apiKey string, models []string, backupRoot string) 
 		files = []string{cfg, auth}
 	case "opencode":
 		files = []string{opencodeConfigPath()}
-	case "pi":
+	case "pi", "pi-desktop":
 		files = []string{piModelsPath()}
 	case "kimi-code":
 		files = []string{kimiCodeConfigPath()}
@@ -320,7 +336,8 @@ func ApplyAgent(id, baseURL, apiKey string, models []string, backupRoot string) 
 		}); err != nil {
 			return nil, fmt.Errorf("写入 OpenCode 配置失败: %w", err)
 		}
-	case "pi":
+	case "pi", "pi-desktop":
+		// 两个目标写同一个文件：Pi CLI 读它即生效；PI-Desktop 把它当导入源，需在应用内手动导入
 		if err := writeAgentJSON(files[0], func(root map[string]any) {
 			providers, _ := root["providers"].(map[string]any)
 			if providers == nil {

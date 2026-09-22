@@ -8,7 +8,7 @@ import { EVENT, onEvent } from "../services/events";
 import { confirmDialog, toast } from "../components/common/Feedback";
 import { EmptyRow, ErrorBlock, SkeletonRows } from "../components/common/StateBlock";
 // 汇总卡 / 类型标签 / 口径文案与账号管理弹窗共用同一份定义，杜绝两处口径漂移
-import { CREDIT_TASK_TYPES as TASK_TYPES, CREDIT_TYPE_LABEL as TASK_TYPE_LABEL, CreditOriginNote, CreditSummaryCards, CreditTypeChips } from "../components/common/creditDetail";
+import { CREDIT_TASK_TYPES as TASK_TYPES, CREDIT_TYPE_LABEL as TASK_TYPE_LABEL, CreditObserved, CreditOriginNote, CreditSummaryCards, CreditTypeChips } from "../components/common/creditDetail";
 import type { AuditLogPage, CreditDetail, CreditLogPage, LogQuery, RequestLog, RequestLogPage, TaskLogPage } from "../types";
 import { useT } from "../i18n";
 
@@ -314,7 +314,8 @@ export default function Logs() {
                   <td className="mono">{l.time}</td>
                   <td className="mono">{l.uid}</td>
                   <td className="num" style={{ color: l.delta > 0 ? "var(--red)" : l.delta < 0 ? "var(--green)" : undefined }}>
-                    {l.delta > 0 ? "+" : ""}{l.delta.toLocaleString()}
+                    {/* CreditLog.Delta 语义（store.go）：正 = 消耗，负 = 增加 */}
+                    {l.delta === 0 ? "0" : `${l.delta > 0 ? "-" : "+"}${Math.abs(l.delta).toLocaleString()}`}
                   </td>
                   <td className="num">{l.balance.toLocaleString()}</td>
                   <td>{l.note || "—"}</td>
@@ -350,6 +351,9 @@ export default function Logs() {
 
             {/* 口径必须写在数字前面：说明只统计上游给了数值的动作，并点明有多少条没给 */}
             <CreditOriginNote noAmount={earns.data?.noAmount ?? 0} />
+
+            {/* 观测入账：流水里余额上升的条目（上游异步发放等），来源未确证所以单列 */}
+            <CreditObserved data={earns.data} />
 
             <table className="tbl">
               <thead>

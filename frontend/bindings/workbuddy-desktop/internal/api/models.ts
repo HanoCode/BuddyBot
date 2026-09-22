@@ -164,17 +164,20 @@ export interface CreateKeyResult {
 /**
  * CreditDetail 任务领取积分明细
  * 
- * 口径：只统计上游**明确返回了积分数值**的领取动作（成长任务 reward_credit /
- * 连登档位 credit / 抽奖 credit 奖品 / 礼包补偿 credit）。签到本金、开学季领奖、
- * 盲盒物品、trial 加油包等上游不返回数值的动作不计入——它们不写 0 充数，
- * 而是由 Runs / NoAmount 如实计数，实际到账总额以「积分流水」（真实余额观测）为准。
+ * 口径分两本账，都展示在本页：
+ *   - **确认领取**（Credits / ByTask / ByDay / Items）：只统计上游**明确返回了积分数值**
+ *     的领取动作（成长任务 reward_credit / 连登档位 credit / 抽奖 credit 奖品 / 礼包补偿
+ *     credit）。签到本金、开学季领奖、盲盒物品、trial 加油包等上游不返回数值的动作不写 0
+ *     充数，由 Runs / NoAmount 如实计数。
+ *   - **观测入账**（Observed / ObservedCredits / ObservedToday / ObservedLast7d）：积分流水
+ *     里余额上升的差值条目（delta<0，含上游异步发放的签到/任务计分）。到账是事实、来源
+ *     无法从响应确证，故单列且标注「来源未确证」，不与确认领取混算，也不写进 ByTask。
  * 
- * 筛选分两层，Today / Last7d 只吃第一层：
- *   - 维度筛选（UID / Type / Keyword）：三张卡都按它收窄，保证同一屏内口径一致；
- *   - 时间范围（From / To）：只作用于 Credits / Runs / NoAmount / ByTask / ByDay / Items。
- * 
- * 这样在日志页不筛选时三张卡就是全量的「今天 / 近 7 天」，而账号弹窗里带上 uid 后，
- * 今日卡显示的是**该账号**今天领了多少，不会出现「看 A 账号的明细却显示全局今日」。
+ * 筛选分两层，Today / Last7d / ObservedToday / ObservedLast7d 只吃第一层：
+ *   - 维度筛选（UID / Type / Keyword）：确认领取三卡按它收窄；观测入账只吃 UID / Keyword
+ *     （它没有任务类型，选了 Type 筛选时 Observed 返回空，前端对应隐藏）；
+ *   - 时间范围（From / To）：只作用于 Credits / Runs / NoAmount / ByTask / ByDay / Items /
+ *     Observed / ObservedCredits。
  */
 export interface CreditDetail {
     /**
@@ -211,6 +214,26 @@ export interface CreditDetail {
     "itemHits": number;
     "page": number;
     "pageSize": number;
+
+    /**
+     * 观测入账条目（余额上升，新 → 旧，截断 50 条）
+     */
+    "observed": core$0.CreditLog[] | null;
+
+    /**
+     * 查询范围内观测入账合计（正数，分）
+     */
+    "observedCredits": number;
+
+    /**
+     * 今日观测入账（不受查询范围影响）
+     */
+    "observedToday": number;
+
+    /**
+     * 近 7 天观测入账（含今日）
+     */
+    "observedLast7d": number;
 }
 
 /**

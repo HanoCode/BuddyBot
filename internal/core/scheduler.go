@@ -828,8 +828,14 @@ func (s *Scheduler) applyBalance(uid string, d *BalanceDetail) {
 		}
 	})
 	if delta != 0 {
+		// 备注只标注方向、不猜来源：入账可能来自上游异步发放（签到/任务计分），
+		// 消耗来自网关记账等；具体归因以动作账本（积分明细）为准。
+		note := "余额下降（消耗）"
+		if delta < 0 {
+			note = "余额上升（上游发放）"
+		}
 		s.svc.Store().AppendCreditLog(CreditLog{
-			ID: NewID("c"), Time: Now(), UID: uid, Delta: delta, Balance: d.Remain,
+			ID: NewID("c"), Time: Now(), UID: uid, Delta: delta, Balance: d.Remain, Note: note,
 		})
 	}
 	s.notifyCreditTransitions(uid, d, oldRemain, oldExpiring, oldKnown)
@@ -961,7 +967,9 @@ func (s *Scheduler) claimGrowthRewards(cred *UpstreamCred) (string, int) {
 	} else {
 		var claimed []string
 		var failed []string
+		var states []string // 各档状态摘要（无可领时带回消息，避免「签到 0 分」无从解释）
 		for _, tier := range rs.Tiers {
+			states = append(states, tier.Tier+"="+tier.Status)
 			if tier.Status != "available" {
 				continue // claimed 已领 / locked 未达标
 			}
@@ -977,6 +985,9 @@ func (s *Scheduler) claimGrowthRewards(cred *UpstreamCred) (string, int) {
 		}
 		if len(failed) > 0 {
 			notes = append(notes, "兑换失败: "+strings.Join(failed, " "))
+		}
+		if len(claimed) == 0 && len(failed) == 0 && len(states) > 0 {
+			notes = append(notes, "连登档位无可领("+strings.Join(states, ", ")+")")
 		}
 	}
 	if note, n := s.drawLottery(cred); note != "" {

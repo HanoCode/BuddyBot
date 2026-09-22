@@ -9,8 +9,10 @@ export const en: Record<string, string> = {
     "Writes model_provider in ~/.codex/config.toml and OPENAI_API_KEY in auth.json",
   "在 ~/.config/opencode/opencode.json 增加 provider.workbuddy":
     "Adds provider.workbuddy to ~/.config/opencode/opencode.json",
-  "在 ~/.pi/agent/models.json 增加 providers.workbuddy":
-    "Adds providers.workbuddy to ~/.pi/agent/models.json",
+  "在 ~/.pi/agent/models.json 增加 providers.workbuddy（Pi CLI 写入即生效）":
+    "Adds providers.workbuddy to ~/.pi/agent/models.json (takes effect immediately for Pi CLI)",
+  "在 ~/.pi/agent/models.json 增加 providers.workbuddy（PI-Desktop 的模型导入源；写入后需在 PI-Desktop 设置 → 导入 → 模型 中手动导入才生效）":
+    "Adds providers.workbuddy to ~/.pi/agent/models.json (the model import source of PI-Desktop; after writing, import it manually in PI-Desktop under Settings → Import → Models to take effect)",
   "写入 ~/.kimi-code/config.toml 的 default_model 与 providers.workbuddy":
     "Writes default_model and providers.workbuddy to ~/.kimi-code/config.toml",
   "在 ~/.codebuddy/models.json 写入 vendor=WorkBuddy 的自定义模型条目（其余模型原样保留）":
@@ -41,6 +43,8 @@ export const en: Record<string, string> = {
   "更新": "Update",
   "{name} 接入成功": "{name} connected successfully",
   "写入 {n} 个文件，备份于 {dir}": "Wrote {n} files, backed up to {dir}",
+  "PI-Desktop 需手动导入才会生效：打开 PI-Desktop → 设置 → 导入 → 切到「模型」标签 → 扫描 → 勾选 Pi 分组中的 workbuddy → 导入所选":
+    "PI-Desktop needs a manual import to take effect: open PI-Desktop → Settings → Import → switch to the Models tab → Scan → check workbuddy under the Pi group → Import selected",
   "{name} 接入失败": "{name} connection failed",
   "回滚 {name} 配置": "Roll back {name} configuration",
   "将把备份 {id} 中的 {n} 个文件恢复到原路径，当前配置会被覆盖。":

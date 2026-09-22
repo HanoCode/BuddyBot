@@ -1547,3 +1547,40 @@ func TestGatewayEmbeddingsImagesUnsupported(t *testing.T) {
 		t.Fatalf("日志条数 = %d, want 4", len(logs))
 	}
 }
+
+// content 兼容 parts 数组形态（PI-Desktop 等 agent 客户端把纯文本也编成
+// [{"type":"text","text":"..."}]）：应解析成功走到账号选择（空池 503），
+// 而不是 400「请求体不是合法 JSON」。
+func TestGatewayContentPartsArray(t *testing.T) {
+	svc := newTestService(t)
+	base := startTestGateway(t, svc)
+	res := postChat(t, base, svc.GetConfig().APIKey,
+		`{"model":"glm-5.2","messages":[{"role":"user","content":[{"type":"text","text":"he"},{"type":"text","text":"llo"}]}]}`)
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusBadRequest {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("parts 数组 content 不应 400: %s", body)
+	}
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("状态码 = %d, want 503（解析通过、到达账号选择）", res.StatusCode)
+	}
+}
+
+func TestFlattenTextContent(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`"hi"`, "hi"},
+		{`null`, ""},
+		{`[]`, ""},
+		{`[{"type":"text","text":"a"},{"type":"image_url","image_url":{"url":"x"}},{"type":"text","text":"b"}]`, "ab"},
+		{`[{"type":"text","text":"单段"}]`, "单段"},
+	}
+	for _, c := range cases {
+		got, err := flattenTextContent(json.RawMessage(c.in))
+		if err != nil || got != c.want {
+			t.Fatalf("flatten(%s) = %q, %v; want %q", c.in, got, err, c.want)
+		}
+	}
+	if _, err := flattenTextContent(json.RawMessage(`{"x":1}`)); err == nil {
+		t.Fatalf("对象形态应返回错误（维持 400 语义）")
+	}
+}

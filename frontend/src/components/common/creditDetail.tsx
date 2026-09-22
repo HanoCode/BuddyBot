@@ -4,6 +4,7 @@
 // 口径说明、任务名映射一旦分叉，两处数字看着一样但解释不同，是最难查的那类问题。
 import type { CreditDetail, CreditDetailDay, CreditDetailTask } from "../../types";
 import { useT } from "../../i18n";
+import type { CreditLog } from "../../types";
 
 /** 任务类型下拉与标签共用的同一份定义（空值项供筛选下拉使用，不进标签映射） */
 export const CREDIT_TASK_TYPES: { label: string; value: string }[] = [
@@ -31,28 +32,32 @@ export const CREDIT_TYPE_LABEL: Record<string, string> = Object.fromEntries(
  * 账号范围由页面在标题处单独说明（见 CreditDetailDialog 的 .cd-scope）。
  */
 export const CREDIT_ORIGIN_NOTE =
-  "仅统计上游明确返回积分数值的领取动作（成长任务奖励 / 连登档位 / 抽奖积分 / 礼包补偿）。签到本金、开学季领奖、盲盒物品、试用加油包等上游不返回数值的动作不计入——当前筛选范围内另有 {n} 条执行记录未返回数值。实际到账总额请以「积分流水」的真实余额观测为准。";
+  "「领取明细」仅统计上游明确返回积分数值的领取动作（成长任务奖励 / 连登档位 / 抽奖积分 / 礼包补偿）。签到本金、开学季领奖等上游不返回数值的动作不写 0 充数——当前筛选范围内另有 {n} 条执行记录未返回数值。上游异步发放的到账已列在下方「观测入账」区（按余额观测，来源未确证）。";
 
-/** 三张汇总卡：今日 / 近 7 天 / 范围合计 */
+/**
+ * 三张汇总卡：今日 / 近 7 天 / 范围合计。
+ * 主数字 = 确认领取 + 观测入账（两本账都展示，缺一本账号就是永远 0），下行拆分标注
+ * 「确认 x · 观测 y」——不标注的合并数字会让用户把观测值当成上游确认的领取。
+ */
 export function CreditSummaryCards({ data, rangeLabel }: { data?: CreditDetail | null; rangeLabel: string }) {
   const t = useT();
+  const cards = [
+    { small: t("今日入账"), confirmed: data?.today ?? 0, observed: data?.observedToday ?? 0 },
+    { small: t("近 7 天入账"), confirmed: data?.last7d ?? 0, observed: data?.observedLast7d ?? 0 },
+    { small: t(rangeLabel), confirmed: data?.credits ?? 0, observed: data?.observedCredits ?? 0 },
+  ];
   return (
     <div className="earn-cards">
-      <div className="earn-card">
-        <small>{t("今日领取")}</small>
-        <b>{(data?.today ?? 0).toLocaleString()}</b>
-        <i>{t("分")}</i>
-      </div>
-      <div className="earn-card">
-        <small>{t("近 7 天领取")}</small>
-        <b>{(data?.last7d ?? 0).toLocaleString()}</b>
-        <i>{t("分")}</i>
-      </div>
-      <div className="earn-card">
-        <small>{t(rangeLabel)}</small>
-        <b>{(data?.credits ?? 0).toLocaleString()}</b>
-        <i>{t("分")}</i>
-      </div>
+      {cards.map((c) => (
+        <div className="earn-card" key={c.small}>
+          <small>{c.small}</small>
+          <b>{(c.confirmed + c.observed).toLocaleString()}</b>
+          <i>{t("分")}</i>
+          {(c.confirmed > 0 || c.observed > 0) && (
+            <em>{t("确认 {c} · 观测 {o}", { c: c.confirmed.toLocaleString(), o: c.observed.toLocaleString() })}</em>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -102,6 +107,43 @@ export function CreditDayBars({ days, max = 7 }: { days?: CreditDetailDay[] | nu
           <span className="cd-day-c">{t("{n} 次", { n: d.count })}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * 观测入账区：积分流水里余额上升的条目（含上游异步发放的签到 / 任务计分）。
+ * 到账是观测事实、来源无法确证，所以与「领取明细」分列且始终带「来源未确证」标注，
+ * 绝不混进上面的领取合计——两本账混了，数字对不上时就没法排查。
+ */
+export function CreditObserved({ data }: { data?: CreditDetail | null }) {
+  const t = useT();
+  const items: CreditLog[] = data?.observed ?? [];
+  if (items.length === 0 && (data?.observedCredits ?? 0) === 0) return null;
+  return (
+    <div className="cd-observed">
+      <p className="earn-note">{t("观测入账（余额上升，来源未确证）：今日 +{today} 分，近 7 天 +{last7d} 分，筛选范围内合计 +{range} 分", { today: (data?.observedToday ?? 0).toLocaleString(), last7d: (data?.observedLast7d ?? 0).toLocaleString(), range: (data?.observedCredits ?? 0).toLocaleString() })}</p>
+      {items.length > 0 && (
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>{t("时间")}</th><th>{t("账号")}</th><th>{t("入账")}</th>
+              <th>{t("变动后余额")}</th><th>{t("备注")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((l) => (
+              <tr key={l.id}>
+                <td className="mono">{l.time}</td>
+                <td className="mono">{l.uid}</td>
+                <td className="num earn-amount">+{Math.abs(l.delta).toLocaleString()}</td>
+                <td className="num">{l.balance.toLocaleString()}</td>
+                <td>{l.note || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

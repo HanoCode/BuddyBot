@@ -322,6 +322,7 @@ func (s *Scheduler) doSchool(a Account, cred *UpstreamCred) TaskRunDetail {
 		return TaskRunDetail{UID: a.UID, Status: TaskSkipped, Message: "开学季任务不可用: " + err.Error()}
 	}
 	done, claimed := 0, 0
+	var claimFails []string // claim 失败原因带回消息，不静默吞（否则只会看到「领取 0 个」无从排查）
 	for _, t := range tasks.Tasks {
 		code := t.Code
 		if code == "" {
@@ -336,10 +337,15 @@ func (s *Scheduler) doSchool(a Account, cred *UpstreamCred) TaskRunDetail {
 		}
 		if err := post("/tasks/"+code+"/claim", nil); err == nil {
 			claimed++
+		} else {
+			claimFails = append(claimFails, code+": "+err.Error())
 		}
 		done++
 	}
 	msg := fmt.Sprintf("开学季任务处理 %d 个，领取 %d 个", done, claimed)
+	if len(claimFails) > 0 {
+		msg += "；领取失败: " + strings.Join(claimFails, "；")
+	}
 	// 抽奖：查 config 里的 chance.balance，>0 就抽完
 	var cfg struct {
 		Chance struct {

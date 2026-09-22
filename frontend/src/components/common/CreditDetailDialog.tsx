@@ -14,7 +14,7 @@ import { useAsync } from "../../hooks/useAsync";
 import { EmptyRow, ErrorBlock, SkeletonRows } from "../common/StateBlock";
 import type { CreditDetail, LogQuery } from "../../types";
 import { useT } from "../../i18n";
-import { CreditDayBars, CreditOriginNote, CreditSummaryCards, CreditTypeChips, CREDIT_TYPE_LABEL } from "./creditDetail";
+import { CreditDayBars, CreditObserved, CreditOriginNote, CreditSummaryCards, CreditTypeChips, CREDIT_TYPE_LABEL } from "./creditDetail";
 
 /** 弹窗一次取满：弹窗是「看某账号领了多少」，翻页价值低，超出部分引导去日志页 */
 const PAGE_SIZE = 200;
@@ -64,6 +64,7 @@ export default function CreditDetailDialog({
           <CreditSummaryCards data={earn.data} rangeLabel="累计合计" />
           <CreditTypeChips groups={earn.data?.byTask} />
           <CreditDayBars days={earn.data?.byDay} />
+          <CreditObserved data={earn.data} />
           <CreditOriginNote noAmount={earn.data?.noAmount ?? 0} />
 
           <table className="tbl">

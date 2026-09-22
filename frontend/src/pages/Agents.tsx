@@ -14,7 +14,8 @@ const AGENT_DESC: Record<string, string> = {
   "claude-code": "写入 ~/.claude/settings.json 的 env（ANTHROPIC_BASE_URL / AUTH_TOKEN / 四个模型槽位）",
   codex: "写入 ~/.codex/config.toml 的 model_provider 与 auth.json 的 OPENAI_API_KEY",
   opencode: "在 ~/.config/opencode/opencode.json 增加 provider.workbuddy",
-  pi: "在 ~/.pi/agent/models.json 增加 providers.workbuddy",
+  pi: "在 ~/.pi/agent/models.json 增加 providers.workbuddy（Pi CLI 写入即生效）",
+  "pi-desktop": "在 ~/.pi/agent/models.json 增加 providers.workbuddy（PI-Desktop 的模型导入源；写入后需在 PI-Desktop 设置 → 导入 → 模型 中手动导入才生效）",
   "kimi-code": "写入 ~/.kimi-code/config.toml 的 default_model 与 providers.workbuddy",
   codebuddy: "在 ~/.codebuddy/models.json 写入 vendor=WorkBuddy 的自定义模型条目（其余模型原样保留）",
   workbuddy: "在 ~/.workbuddy/models.json 写入 vendor=WorkBuddy 的自定义模型条目（其余模型原样保留）",
@@ -99,7 +100,11 @@ export default function Agents() {
     setBusy(t.id);
     try {
       const res = await agentsApi.apply({ target: t.id, models: [...picked] });
-      toast.success(tr("{name} 接入成功", { name: t.name }), tr("写入 {n} 个文件，备份于 {dir}", { n: res.files?.length ?? 0, dir: res.backupDir }));
+      // PI-Desktop 的活配置（key 经 safeStorage 加密）只能由它自己导入，写入导入源不代表桌面版立即生效
+      const piHint = t.id === "pi-desktop"
+        ? "；" + tr("PI-Desktop 需手动导入才会生效：打开 PI-Desktop → 设置 → 导入 → 切到「模型」标签 → 扫描 → 勾选 Pi 分组中的 workbuddy → 导入所选")
+        : "";
+      toast.success(tr("{name} 接入成功", { name: t.name }), tr("写入 {n} 个文件，备份于 {dir}", { n: res.files?.length ?? 0, dir: res.backupDir }) + piHint);
       await targets.reload();
       void loadBackups(t.id);
     } catch (e) {

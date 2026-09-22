@@ -212,3 +212,70 @@ func TestGetCreditDetailByUID(t *testing.T) {
 		}
 	}
 }
+
+// TestGetCreditDetailObserved 观测入账口径：积分流水里余额上升（delta<0）的条目
+// 单列进 Observed，不与确认领取混算；消耗（delta>0）绝不计入；Type 筛选时返回空。
+func TestGetCreditDetailObserved(t *testing.T) {
+	svc := core.NewServiceAt(t.TempDir())
+	api := NewLogsAPI(svc)
+	now := time.Now()
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+	addLog := func(uid string, delta float64, at time.Time) {
+		svc.Store().AppendCreditLog(core.CreditLog{
+			ID: core.NewID("c"), TS: at.Unix(), Time: at.Format("2006-01-02 15:04:05"),
+			UID: uid, Delta: delta, Balance: 100 + delta,
+		})
+	}
+	addLog("uA", -24, dayStart.Add(time.Hour))  // 今日入账 24（上游异步发放）
+	addLog("uA", -6, now.AddDate(0, 0, -3))     // 近 7 天入账 6
+	addLog("uA", 4, now.Add(-time.Minute))      // 消耗：绝不能算进观测入账
+	addLog("uA", -50, now.AddDate(0, 0, -30))   // 范围外（默认全量也含它，见下）
+	addLog("uB", -99, dayStart.Add(time.Hour))  // 干扰账号
+	svc.Store().AppendTaskLog(core.TaskLog{ // 确认领取：不得混进观测入账
+		ID: core.NewID("t"), TS: now.Unix(), Time: now.Format("2006-01-02 15:04:05"),
+		Type: core.TaskGrowth, Trigger: "manual", UID: "uA", Status: core.TaskSuccess,
+		Message: "m", Credits: 30,
+	})
+
+	got, err := api.GetCreditDetail(context.Background(), LogQuery{})
+	if err != nil {
+		t.Fatalf("GetCreditDetail 失败: %v", err)
+	}
+	// 不带 uid 筛选时是全局口径（uA + uB 都算）
+	if got.ObservedToday != 123 {
+		t.Fatalf("今日观测入账应为 123（uA 24 + uB 99），got %d", got.ObservedToday)
+	}
+	if got.ObservedLast7d != 129 {
+		t.Fatalf("近 7 天观测入账应为 129（uA 24+6 + uB 99），got %d", got.ObservedLast7d)
+	}
+	if got.ObservedCredits != 179 {
+		t.Fatalf("范围内观测入账应为 179（24+6+50+99），got %d", got.ObservedCredits)
+	}
+	for _, it := range got.Observed {
+		if it.Delta >= 0 {
+			t.Fatalf("观测入账混入了消耗条目: %+v", it)
+		}
+	}
+	if got.Credits != 30 {
+		t.Fatalf("确认领取必须与观测入账分账（应为 30），got %d", got.Credits)
+	}
+
+	// 账号维度过滤：只看 uB
+	byUID, err := api.GetCreditDetail(context.Background(), LogQuery{UID: "uB"})
+	if err != nil {
+		t.Fatalf("GetCreditDetail(uid) 失败: %v", err)
+	}
+	if byUID.ObservedCredits != 99 || byUID.ObservedToday != 99 {
+		t.Fatalf("uB 观测入账应为 99，got range=%d today=%d", byUID.ObservedCredits, byUID.ObservedToday)
+	}
+
+	// 类型筛选：观测入账没有任务类型，返回空而不是硬凑
+	byType, err := api.GetCreditDetail(context.Background(), LogQuery{Type: core.TaskGrowth})
+	if err != nil {
+		t.Fatalf("GetCreditDetail(type) 失败: %v", err)
+	}
+	if len(byType.Observed) != 0 || byType.ObservedCredits != 0 {
+		t.Fatalf("带类型筛选时观测入账应为空，got %+v", byType.Observed)
+	}
+}

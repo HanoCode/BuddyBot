@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { BarChart3, Check, Copy, KeyRound, Pencil, Loader2, Trash2, X } from "lucide-react";
-import { keysApi, modelsApi } from "../services/api";
+import {
+  BarChart3, Check, ChevronDown, Copy, KeyRound, Pencil, Loader2, Trash2, X,
+} from "lucide-react";
+import { gatewayApi, keysApi, modelsApi } from "../services/api";
 import { broadcastRefresh, errText, useAsync } from "../hooks/useAsync";
 import { confirmDialog, toast } from "../components/common/Feedback";
 import { EmptyRow, ErrorBlock, SkeletonRows, EmptyBlock } from "../components/common/StateBlock";
 import { useT } from "../i18n";
-import type { CreateKeyParams, KeyUsage, KeyView, ModelInfo } from "../types";
+import type { CreateKeyParams, GatewayStatus, KeyUsage, KeyView, ModelInfo } from "../types";
 
 interface FormState {
   id?: string;
@@ -35,6 +37,9 @@ export default function Keys() {
 
   const keys = useAsync<KeyView[]>(() => keysApi.list(), []);
   const models = useAsync<ModelInfo[]>(() => modelsApi.list(), []);
+  const gw = useAsync<GatewayStatus>(() => gatewayApi.status(), []);
+  const [keyId, setKeyId] = useState("");
+  const [connOpen, setConnOpen] = useState(true);
 
   const load = useCallback(async () => {
     await keys.reload();
@@ -129,6 +134,23 @@ export default function Keys() {
 
   const rows = keys.data ?? [];
 
+  // 接入信息：Base URL 由网关监听地址推导（":7863" → http://127.0.0.1:7863/v1）
+  const baseUrl = useMemo(() => {
+    const listen = (gw.data?.listen || ":7863").trim();
+    if (listen.includes("://")) return listen.replace(/\/+$/, "") + "/v1";
+    let host = listen.startsWith(":") ? "127.0.0.1" + listen : listen;
+    if (host.startsWith("0.0.0.0")) host = "127.0.0.1" + host.slice(7);
+    return "http://" + host + "/v1";
+  }, [gw.data]);
+  const selKey = rows.find((r) => r.id === keyId) ?? rows[0];
+  const model = models.data?.[0]?.id || "glm-5.2";
+  const curl = [
+    `curl ${baseUrl}/chat/completions \\`,
+    `  -H "Authorization: Bearer ${selKey?.key || "wb-gw-…"}" \\`,
+    `  -H "Content-Type: application/json" \\`,
+    `  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}]}'`,
+  ].join("\n");
+
   return (
     <section className="page">
       <div className="page-head">
@@ -140,6 +162,82 @@ export default function Keys() {
           <button className="btn btn-ghost" onClick={() => void load()}>{t("刷新")}</button>
           <button className="btn btn-primary" onClick={() => setForm({ ...EMPTY, models: ["glm-5.2"] })}>{t("＋ 创建密钥")}</button>
         </div>
+      </div>
+
+      {/* 接入信息：让任意支持 OpenAI 兼容接口的客户端 / agent 快速接入（卡头可折叠） */}
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div
+          className="card-h"
+          style={{ cursor: "pointer", userSelect: "none" }}
+          onClick={() => setConnOpen((v) => !v)}
+          data-tip={connOpen ? t("收起") : t("展开")}
+        >
+          <div>
+            <h3 className="flex" style={{ gap: 6, alignItems: "center" }}>
+              <ChevronDown
+                size={15}
+                strokeWidth={2.2}
+                className="spin-90"
+                style={{ transition: "transform .2s", transform: connOpen ? "rotate(180deg)" : undefined, color: "var(--text-3)" }}
+              />
+              {t("接入信息")}
+            </h3>
+            <div className="sub">{t("OpenAI 兼容接口：任何支持自定义 Base URL 的客户端或 agent，填入下方地址与密钥即可调用本机网关")}</div>
+          </div>
+          <div className="flex" style={{ gap: 8, alignItems: "center" }}>
+            <span className="badge b-blue"><span className="d" />{t("OpenAI 兼容")}</span>
+          </div>
+        </div>
+        {connOpen && (
+        <div className="card-b">
+          <div className="flex" style={{ gap: 10, alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--border)" }}>
+            <span style={{ width: 84, flex: "none", fontSize: 12.5, color: "var(--text-2)" }}>{t("Base URL")}</span>
+            <code className="mono ellip" style={{ flex: 1, fontSize: 12.5 }}>{baseUrl}</code>
+            <button className="icon-btn" data-tip={t("复制 Base URL")} onClick={() => copy(baseUrl, "baseurl")}>
+              {copied === "baseurl" ? <Check size={12} strokeWidth={2.4} /> : <Copy size={12} strokeWidth={2} />}
+            </button>
+          </div>
+          <div className="flex" style={{ gap: 10, alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--border)" }}>
+            <span style={{ width: 84, flex: "none", fontSize: 12.5, color: "var(--text-2)" }}>{t("API 密钥")}</span>
+            {selKey ? (
+              <>
+                <select
+                  className="mini-input mono"
+                  style={{ flex: 1, fontSize: 12.5, minWidth: 0 }}
+                  value={selKey.id}
+                  onChange={(e) => setKeyId(e.target.value)}
+                  data-tip={t("选择要用于示例与复制的密钥")}
+                >
+                  {rows.map((k) => (
+                    <option key={k.id} value={k.id}>{k.name}（{k.mask}）</option>
+                  ))}
+                </select>
+                <button className="icon-btn" data-tip={t("复制完整密钥")} onClick={() => copy(selKey.key || selKey.mask, `connkey-${selKey.id}`)}>
+                  {copied === `connkey-${selKey.id}` ? <Check size={12} strokeWidth={2.4} /> : <Copy size={12} strokeWidth={2} />}
+                </button>
+              </>
+            ) : (
+              <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>{t("还没有密钥：先在下方创建一个")}</span>
+            )}
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <div className="flex" style={{ gap: 8, alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>{t("curl 示例")}</span>
+              <span className="spacer" />
+              <button className="btn btn-ghost sm" onClick={() => copy(curl, "curl")}>
+                {copied === "curl" ? <Check size={12} strokeWidth={2.4} /> : <Copy size={12} strokeWidth={2} />}
+                {t("复制")}
+              </button>
+            </div>
+            <pre className="mono" style={{ margin: 0, padding: "12px 14px", borderRadius: 10, background: "var(--surface-2)", border: "1px solid var(--border)", fontSize: 12, lineHeight: 1.7, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{curl}</pre>
+          </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-3)", lineHeight: 1.7 }}>
+            {t("可用接口：POST {b}/chat/completions · GET {b}/models；鉴权头为 Authorization: Bearer <密钥>。", { b: baseUrl })}
+            <br />
+            {t("本机 AI 编程客户端（Claude Code / Codex 等）可在「智能体接入」页一键写入配置，无需手动粘贴。")}
+          </div>
+        </div>
+        )}
       </div>
 
       {keys.error && <ErrorBlock message={keys.error} onRetry={() => void load()} />}

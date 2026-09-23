@@ -4,7 +4,7 @@ import {
   AlertTriangle, Archive, Bell, Copy, Download, ExternalLink, Eye, EyeOff, FolderOpen, Info, Loader2,
   RefreshCw, RotateCw, Save, ShieldCheck, Upload, X,
 } from "lucide-react";
-import { powerApi, injectApi, accountsApi, configApi, systemApi, dataMigrateApi } from "../services/api";
+import { powerApi, injectApi, accountsApi, configApi, systemApi, dataMigrateApi, autoStartApi } from "../services/api";
 import { EVENT, onEvent } from "../services/events";
 import { confirmDialog, toast } from "../components/common/Feedback";
 import { EmptyBlock, ErrorBlock, LoadingBlock } from "../components/common/StateBlock";
@@ -13,7 +13,7 @@ import { ACCENTS, useAccent, useTheme } from "../hooks/useTheme";
 import { getCloseBehavior, setCloseBehavior, type CloseBehavior } from "../hooks/useCloseBehavior";
 import { setLang, t, useLang, useT } from "../i18n";
 import type {
-  AccountBackup, AwakeStatus, BackupItem, DataMigrationDiag, GatewayConfig, InjectConfig, InjectStatus,
+  AccountBackup, AwakeStatus, AutoStartStatus, BackupItem, DataMigrationDiag, GatewayConfig, InjectConfig, InjectStatus,
   ModelPrice, SchedulerStatus, SystemInfo, UpdateInfo,
 } from "../types";
 
@@ -1285,11 +1285,12 @@ function RedisSection({ draft, setDraft }: { draft: GatewayConfig; setDraft: (c:
   );
 }
 
-// ---------- 增强功能（防休眠 + 客户端注入） ----------
+// ---------- 增强功能（开机自启 + 防休眠 + 客户端注入） ----------
 
 function EnhanceSection() {
   const t = useT();
   const [awake, setAwake] = useState<AwakeStatus | null>(null);
+  const [autoStart, setAutoStart] = useState<AutoStartStatus | null>(null);
   const [injectSt, setInjectSt] = useState<InjectStatus | null>(null);
   const [injectCfg, setInjectCfg] = useState<InjectConfig | null>(null);
   const [accts, setAccts] = useState<AccountBackup[]>([]);
@@ -1297,8 +1298,9 @@ function EnhanceSection() {
 
   const [injectErr, setInjectErr] = useState<string | null>(null);
   const load = useCallback(async () => {
-    const [aw, st, cfg, list] = await Promise.all([
+    const [aw, as, st, cfg, list] = await Promise.all([
       powerApi.status(),
+      autoStartApi.status().catch(() => null),
       injectApi.status().catch((e) => {
         setInjectErr(errText(e));
         return null;
@@ -1308,6 +1310,7 @@ function EnhanceSection() {
     ]);
     if (st) setInjectErr(null);
     setAwake(aw);
+    setAutoStart(as);
     setInjectSt(st);
     setInjectCfg(cfg);
     setAccts(list);
@@ -1331,6 +1334,20 @@ function EnhanceSection() {
       }),
     [load, t],
   );
+
+  const toggleAutoStart = async () => {
+    setBusy("autostart");
+    try {
+      const on = !(autoStart?.enabled ?? false);
+      await autoStartApi.set(on);
+      await load();
+      toast.success(on ? t("开机自启已开启，下次登录系统时生效") : t("开机自启已关闭"));
+    } catch (e) {
+      toast.error(t("设置失败"), errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const toggleAwake = async () => {
     setBusy("awake");
@@ -1429,6 +1446,45 @@ function EnhanceSection() {
 
   return (
     <>
+      <div className="card set-group">
+        <div className="card-h">
+          <div>
+            <h3>{t("开机自启")}</h3>
+            <div className="sub">{t("登录系统后自动启动 BuddyBot · LaunchAgent / 注册表 Run / XDG autostart")}</div>
+          </div>
+          <span className={`badge ${autoStart?.enabled ? "b-green" : "b-gray"}`}>
+            <span className="d" />
+            {autoStart?.enabled ? t("已注册") : t("未注册")}
+          </span>
+        </div>
+        <div className="card-b">
+          {autoStart && !autoStart.supported && (
+            <div className="notice warn">
+              <AlertTriangle size={15} />
+              <span>{autoStart.note || t("当前平台暂不支持开机自启")}</span>
+            </div>
+          )}
+          {autoStart?.supported && (
+            <SetItem
+              title={t("登录时自动启动")}
+              desc={
+                autoStart.enabled
+                  ? t("已注册为系统登录项，下次登录系统时自动启动（启动后隐藏到托盘）")
+                  : autoStart.note || t("开启后注册为系统登录项，登录系统时自动启动 BuddyBot")
+              }
+            >
+              <button className="btn btn-soft sm" disabled={busy === "autostart"} onClick={() => void toggleAutoStart()}>
+                {busy === "autostart" ? <Loader2 size={13} className="spin" /> : autoStart.enabled ? t("停用") : t("启用")}
+              </button>
+            </SetItem>
+          )}
+          <div className="notice">
+            <Info size={15} />
+            <span>{t("注册状态由系统侧真实文件推导（不写入配置），程序移动或重装后需重新开启。")}</span>
+          </div>
+        </div>
+      </div>
+
       <div className="card set-group">
         <div className="card-h">
           <div>

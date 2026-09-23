@@ -98,6 +98,26 @@ export interface AuditLog {
 }
 
 /**
+ * AutoStartStatus 开机自启真实状态
+ */
+export interface AutoStartStatus {
+    /**
+     * 当前平台是否支持
+     */
+    "supported": boolean;
+
+    /**
+     * 系统侧已注册且指向当前可执行文件
+     */
+    "enabled": boolean;
+
+    /**
+     * 补充说明（不支持原因等）
+     */
+    "note"?: string;
+}
+
+/**
  * ChatMessage 消息
  */
 export interface ChatMessage {

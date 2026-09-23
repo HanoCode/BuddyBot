@@ -740,8 +740,9 @@ func (g *Gateway) applyUpstreamFailure(account Account, kind upstreamErrKind) st
 
 // refreshToken 调上游刷新端点轮换 token。
 // POST {chatBase}/v2/plugin/auth/token/refresh，请求头带 X-Refresh-Token +
-// X-Auth-Refresh-Source: plugin（对齐 RefreshHeaders）；响应含新 accessToken /
-// refreshToken / expiresIn / domain。成功返回更新后的凭证（不改写磁盘）。
+// X-Auth-Refresh-Source: plugin（对齐 RefreshHeaders）；响应为业务信封
+// {code,msg,data}，新 accessToken / refreshToken / expiresIn / domain 在 data 中
+// （也兼容无信封的扁平响应）。成功返回更新后的凭证（不改写磁盘）。
 func (c *upstreamClient) refreshToken(cred *UpstreamCred) (*UpstreamCred, error) {
 	if strings.TrimSpace(cred.RefreshToken) == "" {
 		return nil, fmt.Errorf("凭证缺少 refreshToken，无法刷新")
@@ -771,13 +772,25 @@ func (c *upstreamClient) refreshToken(cred *UpstreamCred) (*UpstreamCred, error)
 		}
 		return nil, fmt.Errorf("刷新被上游拒绝（%d）%s", resp.StatusCode, truncateBody(raw))
 	}
+	// 该端点与同族 /auth/* 一致返回业务信封 {code,msg,data}，token 在 data 里；
+	// 同时也兼容无信封的扁平响应（历史实现 / 单测 mock）。
+	payload := raw
+	if env, ok := unwrapEnvelopeIfPresent(raw); ok {
+		if env.Code != 0 {
+			if isRefreshRejectedBody(string(raw)) {
+				return nil, &reloginRequiredError{msg: fmt.Sprintf("refresh token 被服务端拒绝（code=%d）%s", env.Code, truncateBody(raw))}
+			}
+			return nil, fmt.Errorf("刷新被上游拒绝（code=%d msg=%s）", env.Code, env.Msg)
+		}
+		payload = env.Data
+	}
 	var tok struct {
 		AccessToken  string `json:"accessToken"`
 		RefreshToken string `json:"refreshToken"`
 		ExpiresIn    int64  `json:"expiresIn"`
 		Domain       string `json:"domain"`
 	}
-	if json.Unmarshal(raw, &tok) != nil || tok.AccessToken == "" {
+	if json.Unmarshal(payload, &tok) != nil || tok.AccessToken == "" {
 		return nil, fmt.Errorf("刷新响应缺少 accessToken，需重新授权登录")
 	}
 	out := *cred
@@ -1006,6 +1019,23 @@ func (c *upstreamClient) doEnvelope(req *http.Request) (json.RawMessage, error) 
 			Msg: fmt.Sprintf("code=%d msg=%s", env.Code, env.Msg)}
 	}
 	return env.Data, nil
+}
+
+// unwrapEnvelopeIfPresent 仅当 raw 是「含 code 字段的 JSON 对象」（业务信封）时解出信封；
+// 供需要同时兼容信封与扁平响应的端点使用（如 token/refresh）。
+func unwrapEnvelopeIfPresent(raw []byte) (apiEnvelope, bool) {
+	var probe map[string]json.RawMessage
+	if json.Unmarshal(raw, &probe) != nil {
+		return apiEnvelope{}, false
+	}
+	if _, ok := probe["code"]; !ok {
+		return apiEnvelope{}, false
+	}
+	var env apiEnvelope
+	if json.Unmarshal(raw, &env) != nil {
+		return apiEnvelope{}, false
+	}
+	return env, true
 }
 
 // Buddy 账号当前猫档案；nil 表示无猫。

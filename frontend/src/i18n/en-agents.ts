@@ -66,6 +66,7 @@ export const en: Record<string, string> = {
     "Model list is empty: keep accounts alive on the Accounts page first to fetch upstream models",
   "点击取消选择": "Click to deselect",
   "点击选择": "Click to select",
+  "复制模型名": "Copy model name",
   "搜索模型…": "Search models…",
   "全部分类": "All categories",
   "全选": "Select all",

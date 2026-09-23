@@ -79,6 +79,7 @@ func main() {
 		application.NewService(api.NewStatsAPI(coreService)),
 		application.NewService(api.NewSkillsAPI(coreService)),
 		application.NewService(api.NewSystemAPI(coreService)),
+		application.NewService(api.NewAutoStartAPI(coreService)),
 		application.NewService(api.NewChatAPI(coreService)),
 		application.NewService(api.NewPowerAPI(coreService)),
 		application.NewService(api.NewInjectAPI(coreService, injectManager)),

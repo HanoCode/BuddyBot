@@ -3,6 +3,7 @@
 
 import * as AccountsAPI from "./accountsapi.js";
 import * as AgentsAPI from "./agentsapi.js";
+import * as AutoStartAPI from "./autostartapi.js";
 import * as ChatAPI from "./chatapi.js";
 import * as ClientSwitchAPI from "./clientswitchapi.js";
 import * as ConfigAPI from "./configapi.js";
@@ -20,6 +21,7 @@ import * as SystemAPI from "./systemapi.js";
 export {
     AccountsAPI,
     AgentsAPI,
+    AutoStartAPI,
     ChatAPI,
     ClientSwitchAPI,
     ConfigAPI,

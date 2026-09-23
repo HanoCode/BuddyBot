@@ -12,6 +12,7 @@ import type {
   AccountQuery,
   AccountBackup,
   AwakeStatus,
+  AutoStartStatus,
   AuditLogPage,
   BackupItem,
   BrowseParams,
@@ -428,6 +429,18 @@ export const powerApi = {
   },
   status(): Promise<AwakeStatus> {
     return call(() => API.PowerAPI.Status());
+  },
+};
+
+// ---------- 开机自启 ----------
+
+export const autoStartApi = {
+  status(): Promise<AutoStartStatus> {
+    return call(() => API.AutoStartAPI.Status());
+  },
+  set(on: boolean): Promise<void> {
+    native();
+    return API.AutoStartAPI.Set(on);
   },
 };
 

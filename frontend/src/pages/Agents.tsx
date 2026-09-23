@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Bot, Check, CheckCircle2, ChevronDown, Clock3, Loader2, MonitorSmartphone, RefreshCw, Search, Undo2,
+  Bot, Check, CheckCircle2, ChevronDown, Clock3, Copy, Loader2, MonitorSmartphone, RefreshCw, Search, Undo2,
 } from "lucide-react";
 import { agentsApi, modelsApi } from "../services/api";
 import { errText, useAsync } from "../hooks/useAsync";
@@ -49,6 +49,18 @@ export default function Agents() {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+
+  // 复制模型名（chip 内的复制图标，不触发选中切换）
+  const [copied, setCopied] = useState<string | null>(null);
+  const copyModel = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopied(id);
+      setTimeout(() => setCopied((c) => (c === id ? null : c)), 1500);
+    } catch {
+      toast.error(tr("复制失败"), tr("当前环境不支持剪贴板写入"));
+    }
+  };
 
   // 模型家族：取 id 首段（claude-sonnet-4 → claude / gpt-4o → gpt），用于分类筛选
   const familyOf = useCallback((id: string) => id.split(/[-/_.]/)[0] || id, []);
@@ -194,20 +206,33 @@ export default function Agents() {
               {/* 模型 chips：固定高度内部滚动，不撑开页面 */}
               <div style={{ maxHeight: 168, overflowY: "auto" }}>
                 <div className="flex" style={{ gap: 8, flexWrap: "wrap" }}>
-                  {visibleModels.map((m) => {
-                    const on = picked.has(m.id);
-                    return (
-                      <button
-                        key={m.id}
-                        className={`chip-btn${on ? " on" : ""}`}
-                        onClick={() => toggleModel(m.id)}
-                        data-tip={on ? tr("点击取消选择") : tr("点击选择")}
-                      >
-                        {on ? <Check size={12} strokeWidth={2.6} /> : null}
-                        {m.id}
-                      </button>
-                    );
-                  })}
+              {visibleModels.map((m) => {
+                const on = picked.has(m.id);
+                const done = copied === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    className={`chip-btn${on ? " on" : ""}`}
+                    onClick={() => toggleModel(m.id)}
+                    data-tip={done ? tr("已复制到剪贴板") : on ? tr("点击取消选择") : tr("点击选择")}
+                  >
+                    {on ? <Check size={12} strokeWidth={2.6} /> : null}
+                    {m.id}
+                    <span
+                      className="cp"
+                      role="button"
+                      aria-label={tr("复制模型名")}
+                      data-tip={tr("复制模型名")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void copyModel(m.id);
+                      }}
+                    >
+                      {done ? <Check size={11} strokeWidth={2.6} /> : <Copy size={11} strokeWidth={2} />}
+                    </span>
+                  </button>
+                );
+              })}
                 </div>
                 {visibleModels.length === 0 && <div className="muted" style={{ fontSize: 12, padding: "8px 0" }}>{t("没有匹配的模型")}</div>}
               </div>

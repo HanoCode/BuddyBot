@@ -7,6 +7,7 @@ export type {
     AgentBackup,
     AgentTarget,
     AuditLog,
+    AutoStartStatus,
     ChatMessage,
     ClientSession,
     ClientSwitchPrecheck,

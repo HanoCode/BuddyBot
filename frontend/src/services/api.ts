@@ -165,7 +165,12 @@ export const accountsApi = {
   },
   /** 导出凭证。password 非空 = 加密信封（返回信封 JSON 文本），空 = 明文 v1 结构 */
   exportCredentials(password = ""): Promise<string> {
-    return call(() => API.AccountsAPI.ExportCredentials(password) as unknown as Promise<string>);
+    return call(async () => {
+      // Go 侧返回 json.RawMessage，Wails 运行时已把它反序列化成 JS 对象而非字符串；
+      // 这里统一归一化为 JSON 文本，Blob / JSON.parse 两条消费路径才都可用。
+      const raw = await API.AccountsAPI.ExportCredentials(password);
+      return typeof raw === "string" ? raw : JSON.stringify(raw);
+    });
   },
   openAuthDir(): Promise<string> {
     native();

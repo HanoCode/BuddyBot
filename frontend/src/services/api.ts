@@ -21,9 +21,11 @@ import type {
   ClientSession,
   ClientSwitchPrecheck,
   ClientTokenStats,
+  ConfigExportResult,
   ConfigMeta,
   CreateKeyParams,
   CreateKeyResult,
+  CredentialExportResult,
   CreditDetail,
   CreditLogPage,
   Dashboard,
@@ -163,14 +165,10 @@ export const accountsApi = {
   importClientSession(): Promise<ImportResult> {
     return call(() => API.AccountsAPI.ImportClientSession());
   },
-  /** 导出凭证。password 非空 = 加密信封（返回信封 JSON 文本），空 = 明文 v1 结构 */
-  exportCredentials(password = ""): Promise<string> {
-    return call(async () => {
-      // Go 侧返回 json.RawMessage，Wails 运行时已把它反序列化成 JS 对象而非字符串；
-      // 这里统一归一化为 JSON 文本，Blob / JSON.parse 两条消费路径才都可用。
-      const raw = await API.AccountsAPI.ExportCredentials(password);
-      return typeof raw === "string" ? raw : JSON.stringify(raw);
-    });
+  /** 导出凭证：弹出系统保存对话框，返回落盘路径与份数（path 为空 = 用户取消） */
+  exportCredentials(password = ""): Promise<CredentialExportResult> {
+    native();
+    return API.AccountsAPI.ExportCredentials(password).then((r) => r ?? { path: "", count: 0 });
   },
   openAuthDir(): Promise<string> {
     native();
@@ -415,9 +413,10 @@ export const configApi = {
     native();
     return API.ConfigAPI.Restore(path);
   },
-  export(): Promise<string> {
+  /** 导出配置：弹出系统保存对话框（includeCredentials 时打包凭证），path 为空 = 用户取消 */
+  export(includeCredentials = false, password = ""): Promise<ConfigExportResult> {
     native();
-    return API.ConfigAPI.Export();
+    return API.ConfigAPI.Export(includeCredentials, password).then((r) => r ?? { path: "", credentials: 0 });
   },
   import(json: string): Promise<void> {
     native();

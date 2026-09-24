@@ -597,16 +597,10 @@ export default function Accounts() {
       if (!ok) return;
     }
     try {
-      const text = await accountsApi.exportCredentials(pwd.trim());
-      const blob = new Blob([text], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `workbuddy-credentials-${Date.now()}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      if (encrypted) toast.success(t("已加密导出"), t("文件已用密码加密，请妥善保管密码与文件"));
-      else toast.warn(t("已明文导出"), t("文件包含明文 token，请像保管密码一样保管它"));
+      const res = await accountsApi.exportCredentials(pwd.trim());
+      if (!res.path) return; // 用户取消
+      if (encrypted) toast.success(t("已加密导出"), res.path);
+      else toast.warn(t("已明文导出"), res.path);
     } catch (e) {
       toast.error(t("导出失败"), errText(e));
     }

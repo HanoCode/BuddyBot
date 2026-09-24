@@ -398,7 +398,7 @@ export const en: Record<string, string> = {
   "已从备份恢复": "Restored from backup",
   "恢复失败": "Restore failed",
   "配置导入导出 / 备份与恢复": "config import/export / backup & restore",
-  "下载当前 config.json；「含凭证导出」会把登录凭证一并打包（可选密码加密）": "Download the current config.json; \"With Credentials\" bundles login credentials too (optional password encryption)",
+  "保存到所选位置；「含凭证导出」会把登录凭证一并打包（可选密码加密）": "Save to a location you choose; \"With Credentials\" bundles login credentials too (optional password encryption)",
   "含凭证导出": "With Credentials",
   "导出配置与凭证": "Export Config & Credentials",
   "配置与凭证已导出": "Config & credentials exported",

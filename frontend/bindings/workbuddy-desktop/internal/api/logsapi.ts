@@ -22,7 +22,7 @@ export function ClearLogs(scope: string): $CancellablePromise<number> {
 }
 
 /**
- * Export 导出日志到备份目录，返回文件绝对路径与条数
+ * Export 弹出系统保存对话框，把日志导出到用户选择的位置，返回文件绝对路径与条数
  */
 export function Export(format: string, scope: string, q: $models.LogQuery): $CancellablePromise<$models.LogExportResult | null> {
     return $Call.ByID(2871432657, format, scope, q);

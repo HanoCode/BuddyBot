@@ -1748,22 +1748,13 @@ function DataSection({
     }
   };
 
-  const downloadJson = (data: unknown, name: string) => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
+  // 导出统一走系统保存对话框（后端落盘 + Finder 定位），WebView 的 <a download> 不可靠
   const doExport = async () => {
     setBusy("export");
     try {
-      const json = await configApi.export();
-      downloadJson(JSON.parse(json), "workbuddy-config.json");
-      toast.success(t("配置已导出"), "workbuddy-config.json");
+      const res = await configApi.export(false);
+      if (!res.path) return; // 用户取消
+      toast.success(t("配置已导出"), res.path);
     } catch (e) {
       toast.error(t("导出失败"), errText(e));
     } finally {
@@ -1794,18 +1785,10 @@ function DataSection({
     }
     setBusy("export");
     try {
-      const [cfgJson, credJson] = await Promise.all([
-        configApi.export(),
-        accountsApi.exportCredentials(pwd.trim()),
-      ]);
-      downloadJson({
-        kind: "workbuddy-config-bundle",
-        exportedAt: new Date().toISOString(),
-        config: JSON.parse(cfgJson),
-        credentials: JSON.parse(credJson),
-      }, `workbuddy-config-bundle-${Date.now()}.json`);
-      if (encrypted) toast.success(t("配置与凭证已导出"), t("文件已用密码加密，请妥善保管密码与文件"));
-      else toast.warn(t("已明文导出"), t("文件包含明文 token，请像保管密码一样保管它"));
+      const res = await configApi.export(true, pwd.trim());
+      if (!res.path) return; // 用户取消
+      if (encrypted) toast.success(t("配置与凭证已导出"), res.path);
+      else toast.warn(t("已明文导出"), res.path);
     } catch (e) {
       toast.error(t("导出失败"), errText(e));
     } finally {
@@ -1940,7 +1923,7 @@ function DataSection({
           </div>
         </div>
         <div className="card-b">
-          <SetItem title={t("导出配置")} desc={t("下载当前 config.json；「含凭证导出」会把登录凭证一并打包（可选密码加密）")}>
+          <SetItem title={t("导出配置")} desc={t("保存到所选位置；「含凭证导出」会把登录凭证一并打包（可选密码加密）")}>
             <div style={{ display: "flex", gap: 8 }}>
               <button className="btn btn-ghost sm" disabled={busy === "export"} onClick={doExport}>
                 {busy === "export" ? <Loader2 size={13} className="spin" /> : <Download size={13} strokeWidth={2} />} {t("导出")}

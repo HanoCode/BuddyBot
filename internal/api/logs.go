@@ -212,17 +212,24 @@ type LogExportResult struct {
 	Count int    `json:"count"`
 }
 
-// Export 导出日志到备份目录，返回文件绝对路径与条数
+// Export 弹出系统保存对话框，把日志导出到用户选择的位置，返回文件绝对路径与条数
 func (l *LogsAPI) Export(ctx context.Context, format string, scope string, q LogQuery) (*LogExportResult, error) {
 	format = strings.ToLower(strings.TrimSpace(format))
 	if format != "csv" && format != "json" {
 		return nil, fmt.Errorf("不支持的导出格式: %s", format)
 	}
-	dir, err := exportDir()
+	defaultName := fmt.Sprintf("workbuddy-%s-logs-%s.%s", scope, time.Now().Format("20060102-150405"), format)
+	filter, filterPattern := "JSON 文件", "*.json"
+	if format == "csv" {
+		filter, filterPattern = "CSV 文件", "*.csv"
+	}
+	path, err := saveExportDialog(defaultName, filter, filterPattern)
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, fmt.Sprintf("%s-logs-%s.%s", scope, time.Now().Format("20060102-150405"), format))
+	if path == "" {
+		return &LogExportResult{}, nil // 用户取消
+	}
 
 	var content []byte
 	count := 0
@@ -238,6 +245,7 @@ func (l *LogsAPI) Export(ctx context.Context, format string, scope string, q Log
 	if err := os.WriteFile(path, content, 0o644); err != nil {
 		return nil, err
 	}
+	revealInFileManager(path)
 	return &LogExportResult{Path: path, Count: count}, nil
 }
 

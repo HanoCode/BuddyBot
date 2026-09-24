@@ -521,11 +521,10 @@ type ExportResult struct {
 	Credentials []CredentialExport `json:"credentials"`
 }
 
-// ExportCredentials 导出全部凭证内容。
-// password 非空时输出加密信封（AES-256-GCM + PBKDF2，密码不写入文件）；
-// 为空时保持 v1 明文导出（向后兼容，前端会提示明文风险）。
-func (a *AccountsAPI) ExportCredentials(ctx context.Context, password string) (json.RawMessage, error) {
-	dir := core.ResolveAuthDir(a.service.GetConfig().AuthDir)
+// exportCredentialsPayload 枚举 auth_dir 下全部凭证并输出导出 JSON；
+// password 非空时为 v2 加密信封。返回内容与凭证份数。
+func exportCredentialsPayload(service *core.Service, password string) (json.RawMessage, int, error) {
+	dir := core.ResolveAuthDir(service.GetConfig().AuthDir)
 	entries := []CredentialExport{}
 	names, _ := filepath.Glob(filepath.Join(dir, "workbuddy*.json"))
 	for _, p := range names {
@@ -538,7 +537,7 @@ func (a *AccountsAPI) ExportCredentials(ctx context.Context, password string) (j
 	exportedAt := time.Now().Format(time.RFC3339)
 	if password != "" {
 		if len(entries) == 0 {
-			return nil, fmt.Errorf("没有可导出的凭证")
+			return nil, 0, fmt.Errorf("没有可导出的凭证")
 		}
 		env, err := core.EncryptExport(map[string]any{
 			"authDir":     dir,
@@ -546,10 +545,10 @@ func (a *AccountsAPI) ExportCredentials(ctx context.Context, password string) (j
 			"credentials": entries,
 		}, password, exportedAt, len(entries))
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
-		audit(a.service, "account.export", "", fmt.Sprintf("加密导出 %d 份", len(entries)))
-		return json.RawMessage(env), nil
+		audit(service, "account.export", "", fmt.Sprintf("加密导出 %d 份", len(entries)))
+		return env, len(entries), nil
 	}
 	plain, err := json.Marshal(&ExportResult{
 		AuthDir:     dir,
@@ -557,10 +556,38 @@ func (a *AccountsAPI) ExportCredentials(ctx context.Context, password string) (j
 		Credentials: entries,
 	})
 	if err != nil {
+		return nil, 0, err
+	}
+	audit(service, "account.export", "", fmt.Sprintf("明文导出 %d 份", len(entries)))
+	return plain, len(entries), nil
+}
+
+// CredentialExportResult 凭证导出结果（含落盘路径）
+type CredentialExportResult struct {
+	Path  string `json:"path"`  // 用户取消时为空
+	Count int    `json:"count"` // 导出的凭证份数
+}
+
+// ExportCredentials 弹出系统保存对话框，把全部凭证写入用户选择的位置。
+// password 非空时输出加密信封（AES-256-GCM + PBKDF2，密码不写入文件）；
+// 为空时保持 v1 明文导出（前端会提示明文风险）。
+func (a *AccountsAPI) ExportCredentials(ctx context.Context, password string) (*CredentialExportResult, error) {
+	payload, n, err := exportCredentialsPayload(a.service, password)
+	if err != nil {
 		return nil, err
 	}
-	audit(a.service, "account.export", "", fmt.Sprintf("明文导出 %d 份", len(entries)))
-	return json.RawMessage(plain), nil
+	path, err := saveExportDialog(fmt.Sprintf("workbuddy-credentials-%s.json", time.Now().Format("20060102-150405")), "JSON 文件", "*.json")
+	if err != nil {
+		return nil, err
+	}
+	if path == "" {
+		return &CredentialExportResult{}, nil // 用户取消
+	}
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		return nil, fmt.Errorf("写入文件失败: %w", err)
+	}
+	revealInFileManager(path)
+	return &CredentialExportResult{Path: path, Count: n}, nil
 }
 
 // OpenAuthDir 在系统文件管理器中打开凭证目录，返回目录绝对路径

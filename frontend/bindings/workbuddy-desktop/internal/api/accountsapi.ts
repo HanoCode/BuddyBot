@@ -12,9 +12,6 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as json$0 from "../../../encoding/json/models.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
 import * as core$0 from "../core/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -52,11 +49,11 @@ export function Detail(uid: string): $CancellablePromise<core$0.Account | null> 
 }
 
 /**
- * ExportCredentials 导出全部凭证内容。
+ * ExportCredentials 弹出系统保存对话框，把全部凭证写入用户选择的位置。
  * password 非空时输出加密信封（AES-256-GCM + PBKDF2，密码不写入文件）；
- * 为空时保持 v1 明文导出（向后兼容，前端会提示明文风险）。
+ * 为空时保持 v1 明文导出（前端会提示明文风险）。
  */
-export function ExportCredentials(password: string): $CancellablePromise<json$0.RawMessage> {
+export function ExportCredentials(password: string): $CancellablePromise<$models.CredentialExportResult | null> {
     return $Call.ByID(2234793956, password);
 }
 

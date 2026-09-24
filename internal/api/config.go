@@ -276,13 +276,54 @@ func (c *ConfigAPI) Restore(ctx context.Context, path string) error {
 	return nil
 }
 
-// Export 导出配置 JSON 字符串
-func (c *ConfigAPI) Export(ctx context.Context) (string, error) {
-	b, err := json.MarshalIndent(c.service.GetConfig(), "", "  ")
-	if err != nil {
-		return "", err
+// ConfigExportResult 配置导出结果（含落盘路径）
+type ConfigExportResult struct {
+	Path        string `json:"path"`        // 用户取消时为空
+	Credentials int    `json:"credentials"` // 打包的凭证份数（仅含凭证导出时 >0）
+}
+
+// Export 弹出系统保存对话框，把配置写入用户选择的位置。
+// includeCredentials 时把登录凭证一并打包成合并包（password 非空则 AES-256-GCM 加密信封）。
+func (c *ConfigAPI) Export(ctx context.Context, includeCredentials bool, password string) (*ConfigExportResult, error) {
+	bundle := map[string]any{
+		"kind":       "workbuddy-config-bundle",
+		"exportedAt": time.Now().Format(time.RFC3339),
+		"config":     c.service.GetConfig(),
 	}
-	return string(b), nil
+	creds := 0
+	if includeCredentials {
+		payload, n, err := exportCredentialsPayload(c.service, password)
+		if err != nil {
+			return nil, err
+		}
+		bundle["credentials"] = json.RawMessage(payload)
+		creds = n
+	}
+	b, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	name := "workbuddy-config"
+	if includeCredentials {
+		name = "workbuddy-config-bundle"
+	}
+	path, err := saveExportDialog(fmt.Sprintf("%s-%s.json", name, time.Now().Format("20060102-150405")), "JSON 文件", "*.json")
+	if err != nil {
+		return nil, err
+	}
+	if path == "" {
+		return &ConfigExportResult{}, nil // 用户取消
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return nil, fmt.Errorf("写入文件失败: %w", err)
+	}
+	revealInFileManager(path)
+	if includeCredentials {
+		audit(c.service, "config.export", filepath.Base(path), fmt.Sprintf("导出配置与 %d 份凭证", creds))
+	} else {
+		audit(c.service, "config.export", filepath.Base(path), "导出配置")
+	}
+	return &ConfigExportResult{Path: path, Credentials: creds}, nil
 }
 
 // Import 导入配置 JSON 字符串

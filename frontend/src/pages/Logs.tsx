@@ -114,6 +114,7 @@ export default function Logs() {
     setExporting(true);
     try {
       const res = await logsApi.export(format, tab === "req" ? "request" : "task", query);
+      if (!res.path) return; // 用户取消
       toast.success(t("已导出 {n} 条 {fmt}", { n: res.count, fmt: format.toUpperCase() }), res.path);
     } catch (e) {
       toast.error(t("导出失败"), errText(e));

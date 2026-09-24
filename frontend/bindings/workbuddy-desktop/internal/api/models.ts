@@ -129,6 +129,21 @@ export interface ChatResult {
 }
 
 /**
+ * ConfigExportResult 配置导出结果（含落盘路径）
+ */
+export interface ConfigExportResult {
+    /**
+     * 用户取消时为空
+     */
+    "path": string;
+
+    /**
+     * 打包的凭证份数（仅含凭证导出时 >0）
+     */
+    "credentials": number;
+}
+
+/**
  * ConfigMeta 配置元信息（路径等，供界面展示）
  */
 export interface ConfigMeta {
@@ -159,6 +174,21 @@ export interface CreateKeyResult {
     "id": string;
     "key": string;
     "mask": string;
+}
+
+/**
+ * CredentialExportResult 凭证导出结果（含落盘路径）
+ */
+export interface CredentialExportResult {
+    /**
+     * 用户取消时为空
+     */
+    "path": string;
+
+    /**
+     * 导出的凭证份数
+     */
+    "count": number;
 }
 
 /**

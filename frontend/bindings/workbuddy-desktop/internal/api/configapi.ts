@@ -30,10 +30,11 @@ export function Defaults(): $CancellablePromise<$models.GatewayConfig | null> {
 }
 
 /**
- * Export 导出配置 JSON 字符串
+ * Export 弹出系统保存对话框，把配置写入用户选择的位置。
+ * includeCredentials 时把登录凭证一并打包成合并包（password 非空则 AES-256-GCM 加密信封）。
  */
-export function Export(): $CancellablePromise<string> {
-    return $Call.ByID(1614520592);
+export function Export(includeCredentials: boolean, password: string): $CancellablePromise<$models.ConfigExportResult | null> {
+    return $Call.ByID(1614520592, includeCredentials, password);
 }
 
 /**

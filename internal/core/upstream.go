@@ -93,14 +93,14 @@ func LoadUpstreamCred(dir, file string) (*UpstreamCred, error) {
 	}
 	c := &UpstreamCred{DeviceToken: d.DeviceToken}
 	if d.Auth != nil {
-		c.AccessToken, c.RefreshToken = d.Auth.AccessToken, d.Auth.RefreshToken
+		c.AccessToken, c.RefreshToken = d.Auth.AccessToken.Value, d.Auth.RefreshToken.Value
 		c.Domain, c.Realm = d.Auth.Domain, d.Auth.Realm
 		c.ExpiresAtUnix = d.Auth.ExpiresAt
 		if d.Account != nil {
 			c.UID, c.EnterpriseID = d.Account.UID, d.Account.EnterpriseID
 		}
 	} else {
-		c.AccessToken, c.RefreshToken = d.AccessToken, d.RefreshToken
+		c.AccessToken, c.RefreshToken = d.AccessToken.Value, d.RefreshToken.Value
 		c.Domain, c.Realm = d.Domain, d.Realm
 		c.ExpiresAtUnix = d.ExpiresAt
 		c.UID, c.EnterpriseID = d.UID, d.EnterpriseID

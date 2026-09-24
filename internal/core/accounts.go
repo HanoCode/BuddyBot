@@ -28,32 +28,60 @@ type Credential struct {
 	HasToken     bool
 	HasRefresh   bool
 	HasDevice    bool
+	// EncAuth token 字段为官方客户端加密信封（{"$wbEncrypted":1,...}）：
+	// 存在但 BuddyBot 读不出明文，无法用于网关调用 / 账号池接入。
+	EncAuth bool
 }
 
 type credDoc struct {
 	Auth *struct {
-		AccessToken  string `json:"accessToken"`
-		RefreshToken string `json:"refreshToken"`
-		ExpiresAt    int64  `json:"expiresAt"`
-		Domain       string `json:"domain"`
-		Realm        string `json:"realm"`
+		AccessToken  encString `json:"accessToken"`
+		RefreshToken encString `json:"refreshToken"`
+		ExpiresAt    int64     `json:"expiresAt"`
+		Domain       string    `json:"domain"`
+		Realm        string    `json:"realm"`
 	} `json:"auth"`
 	Account *struct {
-		UID          string `json:"uid"`
-		EnterpriseID string `json:"enterpriseId"`
-		Nickname     string `json:"nickname"`
+		UID          string    `json:"uid"`
+		EnterpriseID string    `json:"enterpriseId"`
+		Nickname     encString `json:"nickname"`
 	} `json:"account"`
 
 	// 扁平形字段
-	AccessToken  string `json:"accessToken"`
-	RefreshToken string `json:"refreshToken"`
-	ExpiresAt    int64  `json:"expiresAt"`
-	Domain       string `json:"domain"`
-	Realm        string `json:"realm"`
-	UID          string `json:"uid"`
-	EnterpriseID string `json:"enterpriseId"`
-	Nickname     string `json:"nickname"`
-	DeviceToken  string `json:"device_token"`
+	AccessToken  encString `json:"accessToken"`
+	RefreshToken encString `json:"refreshToken"`
+	ExpiresAt    int64     `json:"expiresAt"`
+	Domain       string    `json:"domain"`
+	Realm        string    `json:"realm"`
+	UID          string    `json:"uid"`
+	EnterpriseID string    `json:"enterpriseId"`
+	Nickname     encString `json:"nickname"`
+	DeviceToken  string    `json:"device_token"`
+}
+
+// encString 兼容官方客户端 v5.6+ 的加密字符串字段（实测 2026-09-25）：
+// 明文时是 JSON 字符串；加密时是信封对象 {"$wbEncrypted":1,"envelope":"..."}，
+// 密钥在官方客户端侧，BuddyBot 无法解密。这里只记「存在与否 + 是否加密」，
+// 不因字段从字符串变成对象而让整份凭证解析失败（uid/domain 仍是明文，够用）。
+type encString struct {
+	Value     string
+	Present   bool
+	Encrypted bool
+}
+
+func (e *encString) UnmarshalJSON(b []byte) error {
+	*e = encString{}
+	s := string(b)
+	if s == "" || s == "null" {
+		return nil
+	}
+	if s[0] == '"' {
+		e.Present = true
+		return json.Unmarshal(b, &e.Value)
+	}
+	// 非字符串一律视为「存在但不可读」（当前为 $wbEncrypted 信封，容忍未来格式漂移）
+	e.Present, e.Encrypted = true, true
+	return nil
 }
 
 // ParseCredential 解析单个凭证文件内容；仅要求 accessToken 存在。
@@ -69,11 +97,13 @@ func ParseCredential(file string, raw []byte) (*Credential, error) {
 	if d.Auth != nil {
 		c.UID, c.Nickname, c.EnterpriseID = "", "", ""
 		if d.Account != nil {
-			c.UID, c.Nickname, c.EnterpriseID = d.Account.UID, d.Account.Nickname, d.Account.EnterpriseID
+			c.UID, c.EnterpriseID = d.Account.UID, d.Account.EnterpriseID
+			c.Nickname = d.Account.Nickname.Value
 		}
 		applyAuthFields(c, d.Auth.AccessToken, d.Auth.RefreshToken, d.Auth.ExpiresAt, d.Auth.Domain, d.Auth.Realm)
 	} else {
-		c.UID, c.Nickname, c.EnterpriseID = d.UID, d.Nickname, d.EnterpriseID
+		c.UID, c.EnterpriseID = d.UID, d.EnterpriseID
+		c.Nickname = d.Nickname.Value
 		applyAuthFields(c, d.AccessToken, d.RefreshToken, d.ExpiresAt, d.Domain, d.Realm)
 	}
 	if !c.HasToken && !c.HasRefresh {
@@ -87,9 +117,12 @@ func ParseCredential(file string, raw []byte) (*Credential, error) {
 	return c, nil
 }
 
-func applyAuthFields(c *Credential, access, refresh string, expires int64, domain, realm string) {
-	c.HasToken = strings.TrimSpace(access) != ""
-	c.HasRefresh = strings.TrimSpace(refresh) != ""
+func applyAuthFields(c *Credential, access, refresh encString, expires int64, domain, realm string) {
+	// 加密信封也算「存在」（官方登录文件升级后 token 恒为信封）；
+	// 是否可读用 EncAuth 单独标记，供账号池导入口拒绝。
+	c.HasToken = access.Present && (access.Encrypted || strings.TrimSpace(access.Value) != "")
+	c.HasRefresh = refresh.Present && (refresh.Encrypted || strings.TrimSpace(refresh.Value) != "")
+	c.EncAuth = (access.Present && access.Encrypted) || (refresh.Present && refresh.Encrypted)
 	c.ExpiresAt = expires
 	c.Domain = domain
 	c.Realm = realm
@@ -301,6 +334,10 @@ func ImportCredential(dir, name string, raw []byte) (string, error) {
 		return "", err
 	} else if c.UID == "" {
 		return "", fmt.Errorf("凭证缺少 uid")
+	} else if c.EncAuth {
+		// 官方客户端加密信封里的 token BuddyBot 读不出明文，接入网关必然 401，
+		// 不能让坏账号混进账号池（客户端切换不受影响，走 clientswitch 通道）。
+		return "", fmt.Errorf("token 为官方客户端加密信封，无法接入账号池（请在官方客户端内登录该账号）")
 	}
 	base := strings.TrimSpace(name)
 	if base == "" {

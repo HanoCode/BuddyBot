@@ -325,7 +325,12 @@ func (s *Service) ClientRestoreAuthBackup(raw []byte) error {
 	switchStep := func(step, message string) {
 		EmitEvent(EventClientSwitch, map[string]any{"step": step, "uid": cred.UID, "message": message})
 	}
-	switchStep("check", fmt.Sprintf("校验备份账号 %s（%s 版）", cred.Nickname, strings.ToUpper(cred.Realm)))
+	// 官方新版登录文件 nickname 是加密信封，解析后为空，展示兜底 uid
+	name := cred.Nickname
+	if name == "" {
+		name = cred.UID
+	}
+	switchStep("check", fmt.Sprintf("校验备份账号 %s（%s 版）", name, strings.ToUpper(cred.Realm)))
 
 	// 官方当前登录校验：坏数据拒绝、跨通道拒绝
 	if cur, err := os.ReadFile(authFile); err == nil {
@@ -352,7 +357,7 @@ func (s *Service) ClientRestoreAuthBackup(raw []byte) error {
 	}
 
 	// 原子写入官方登录位
-	switchStep("write", fmt.Sprintf("写入账号 %s 的登录凭证", cred.Nickname))
+	switchStep("write", fmt.Sprintf("写入账号 %s 的登录凭证", name))
 	tmp := authFile + ".tmp"
 	if err := os.MkdirAll(filepath.Dir(authFile), 0o700); err != nil {
 		return fmt.Errorf("创建登录目录失败: %w", err)
@@ -369,7 +374,7 @@ func (s *Service) ClientRestoreAuthBackup(raw []byte) error {
 	if err := startOfficialClient(bin, s.GetConfig().Inject.Port); err != nil {
 		return fmt.Errorf("启动客户端失败: %w（登录文件已写入，可手动打开客户端）", err)
 	}
-	switchStep("done", "恢复完成，客户端将以 "+cred.Nickname+" 的身份启动")
+	switchStep("done", "恢复完成，客户端将以 "+name+" 的身份启动")
 	s.Store().Audit("client.restore", cred.UID, "official="+authFile)
 	return nil
 }

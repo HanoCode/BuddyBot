@@ -138,6 +138,41 @@ func TestParseCredentialBothForms(t *testing.T) {
 	}
 }
 
+// 官方客户端 v5.6+（实测 2026-09-25）把 accessToken/refreshToken/nickname 写成
+// {"$wbEncrypted":1,"envelope":"..."} 加密信封。登录文件必须仍可解析（uid/domain
+// 明文），否则客户端切换的坏数据防护会误杀正常登录；但账号池导入要拒绝。
+func TestParseCredentialOfficialEncrypted(t *testing.T) {
+	// 结构对齐真机 workbuddy-desktop.info（字段截取，值脱敏）
+	official := []byte(`{"account":{"uid":"c5c403bf-64c9-4943-b9ab-5ec8634e4937","nickname":{"$wbEncrypted":1,"envelope":"eyJzdWl0ZSI6MX0="},"uin":"330100354612","type":"personal","lastLogin":true},"auth":{"accessToken":{"$wbEncrypted":1,"envelope":"eyJzdWl0ZSI6MX0="},"expiresIn":2592000,"refreshToken":{"$wbEncrypted":1,"envelope":"eyJzdWl0ZSI6MX0="},"tokenType":"Bearer","domain":"www.workbuddy.cn","expiresAt":1792858151893},"accounts":[],"allAccounts":[]}`)
+	c, err := ParseCredential("workbuddy-desktop.info", official)
+	if err != nil {
+		t.Fatalf("官方加密登录文件应可解析: %v", err)
+	}
+	if c.UID != "c5c403bf-64c9-4943-b9ab-5ec8634e4937" {
+		t.Fatalf("uid 应为明文值: %s", c.UID)
+	}
+	if c.Realm != "cn" {
+		t.Fatalf("realm 应按 domain 归一为 cn，got %s", c.Realm)
+	}
+	if !c.HasToken || !c.HasRefresh || !c.EncAuth {
+		t.Fatalf("加密 token 应记为存在但不可读: %+v", c)
+	}
+	if c.Nickname != "" {
+		t.Fatalf("加密 nickname 应为空: %s", c.Nickname)
+	}
+
+	// 账号池导入口必须拒绝加密信封（token 无法供网关使用）
+	dir := t.TempDir()
+	if _, err := ImportCredential(dir, "workbuddy-enc.json", official); err == nil {
+		t.Fatal("加密信封凭证应被账号池导入口拒绝")
+	}
+
+	// LoadUpstreamCred 同样拒绝（加密 token 换不出明文）
+	if _, err := LoadUpstreamCred(dir, "workbuddy-enc.json"); err == nil {
+		t.Fatal("加密信封凭证应无法加载为上游凭证")
+	}
+}
+
 func TestBuildAccountsStatus(t *testing.T) {
 	store := newTestStore(t)
 	now := time.Now()

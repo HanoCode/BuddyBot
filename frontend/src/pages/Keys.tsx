@@ -62,6 +62,16 @@ export default function Keys() {
     }
   };
 
+  // 旧密钥（明文落盘功能上线前创建）只存 SHA-256 摘要，没有明文。绝不能把
+  // mask 脱敏串静默复制出去当真 key 用——网关按摘要匹配必然 401，必须明确提示重建。
+  const copyKey = async (k: KeyView, tag: string) => {
+    if (!k.key) {
+      toast.error(t("该密钥仅存摘要，明文不可恢复"), t("请删除后重新创建一个密钥，再复制新明文"));
+      return;
+    }
+    await copy(k.key, tag);
+  };
+
   const submit = async () => {
     if (!form) return;
     if (!form.name.trim()) {
@@ -212,7 +222,7 @@ export default function Keys() {
                     <option key={k.id} value={k.id}>{k.name}（{k.mask}）</option>
                   ))}
                 </select>
-                <button className="icon-btn" data-tip={t("复制完整密钥")} onClick={() => copy(selKey.key || selKey.mask, `connkey-${selKey.id}`)}>
+                <button className="icon-btn" data-tip={selKey.key ? t("复制完整密钥") : t("明文不可恢复：请重建密钥")} onClick={() => copyKey(selKey, `connkey-${selKey.id}`)}>
                   {copied === `connkey-${selKey.id}` ? <Check size={12} strokeWidth={2.4} /> : <Copy size={12} strokeWidth={2} />}
                 </button>
               </>
@@ -276,8 +286,8 @@ export default function Keys() {
                     <button
                       className="icon-btn"
                       style={{ width: 24, height: 24, verticalAlign: "middle" }}
-                      data-tip={t("复制完整密钥")}
-                      onClick={() => copy(k.key || k.mask, `key-${k.id}`)}
+                      data-tip={k.key ? t("复制完整密钥") : t("明文不可恢复：请重建密钥")}
+                      onClick={() => copyKey(k, `key-${k.id}`)}
                     >
                       {copied === `key-${k.id}` ? <Check size={12} strokeWidth={2.4} /> : <Copy size={12} strokeWidth={2} />}
                     </button>

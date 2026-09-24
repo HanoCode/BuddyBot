@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { powerApi, injectApi, accountsApi, configApi, systemApi, dataMigrateApi, autoStartApi } from "../services/api";
 import { EVENT, onEvent } from "../services/events";
-import { confirmDialog, toast } from "../components/common/Feedback";
+import { confirmDialog, promptDialog, toast } from "../components/common/Feedback";
 import { EmptyBlock, ErrorBlock, LoadingBlock } from "../components/common/StateBlock";
 import { broadcastRefresh, errText, useAsync } from "../hooks/useAsync";
 import { ACCENTS, useAccent, useTheme } from "../hooks/useTheme";
@@ -1748,18 +1748,64 @@ function DataSection({
     }
   };
 
+  const downloadJson = (data: unknown, name: string) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const doExport = async () => {
     setBusy("export");
     try {
       const json = await configApi.export();
-      const blob = new Blob([json], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "workbuddy-config.json";
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadJson(JSON.parse(json), "workbuddy-config.json");
       toast.success(t("配置已导出"), "workbuddy-config.json");
+    } catch (e) {
+      toast.error(t("导出失败"), errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // 含凭证导出：配置 + 登录凭证打成一个合并包；凭证复用账号页的加密导出（可选密码，明文需二次确认）
+  const doExportWithCreds = async () => {
+    const pwd = await promptDialog({
+      title: t("导出配置与凭证"),
+      desc: t("输入导出密码将生成加密文件（AES-256-GCM）；留空则导出明文 JSON。密码不会写入文件，忘记将无法恢复。"),
+      placeholder: t("导出密码（可留空）"),
+      type: "password",
+      optional: true,
+      confirmText: t("导出"),
+    });
+    if (pwd === null) return; // 用户取消
+    const encrypted = pwd.trim() !== "";
+    if (!encrypted) {
+      const ok = await confirmDialog({
+        title: t("明文导出确认"),
+        desc: t("明文文件包含可直接登录的 token，任何拿到该文件的人都能使用这些账号。确定继续？"),
+        danger: true,
+        confirmText: t("明文导出"),
+      });
+      if (!ok) return;
+    }
+    setBusy("export");
+    try {
+      const [cfgJson, credJson] = await Promise.all([
+        configApi.export(),
+        accountsApi.exportCredentials(pwd.trim()),
+      ]);
+      downloadJson({
+        kind: "workbuddy-config-bundle",
+        exportedAt: new Date().toISOString(),
+        config: JSON.parse(cfgJson),
+        credentials: JSON.parse(credJson),
+      }, `workbuddy-config-bundle-${Date.now()}.json`);
+      if (encrypted) toast.success(t("配置与凭证已导出"), t("文件已用密码加密，请妥善保管密码与文件"));
+      else toast.warn(t("已明文导出"), t("文件包含明文 token，请像保管密码一样保管它"));
     } catch (e) {
       toast.error(t("导出失败"), errText(e));
     } finally {
@@ -1774,6 +1820,72 @@ function DataSection({
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
+      const text = await file.text();
+      // 合并包（配置+凭证）：先拆包，配置与凭证分别走各自的导入通道
+      type CredEntry = { file?: string; content: unknown };
+      let bundle: { config: unknown; credentials?: { version?: number; credentials?: CredEntry[] } } | null = null;
+      try {
+        const parsed = JSON.parse(text) as Record<string, unknown>;
+        if (parsed.kind === "workbuddy-config-bundle" && parsed.config) {
+          bundle = parsed as { config: unknown; credentials?: { version?: number; credentials?: CredEntry[] } };
+        }
+      } catch {
+        // 非 JSON 交由后端在原路径校验并报错
+      }
+      if (bundle) {
+        const entries = bundle.credentials?.credentials ?? [];
+        const ok = await confirmDialog({
+          title: t("导入配置与凭证"),
+          desc: entries.length
+            ? t("将用「{name}」覆盖当前配置，并导入 {n} 份登录凭证（网关运行中将自动重启）。", { name: file.name, n: entries.length })
+            : t("将用「{name}」覆盖当前配置（网关运行中将自动重启）。", { name: file.name }),
+          confirmText: t("导入并生效"),
+        });
+        if (!ok) return;
+        setBusy("import");
+        try {
+          await configApi.import(JSON.stringify(bundle.config));
+          let imported = 0;
+          const skipped: string[] = [];
+          if ((bundle.credentials?.version ?? 0) >= 2) {
+            // 加密信封：交后端解密（保留原始凭证文件名）
+            const pwd = await promptDialog({
+              title: t("导入加密文件"),
+              desc: t("该文件为加密导出，请输入导出时的密码"),
+              type: "password",
+              optional: false,
+              confirmText: t("解密导入"),
+            });
+            if (pwd === null) {
+              skipped.push(t("已取消"));
+            } else {
+              const res = await accountsApi.importCredentials(file.name, JSON.stringify(bundle.credentials), pwd);
+              imported += (res.files ?? []).length;
+              skipped.push(...(res.skipped ?? []));
+            }
+          } else {
+            // 明文凭证：逐份按原文件名导入
+            for (const c of entries) {
+              try {
+                await accountsApi.importCredentials(c.file || "workbuddy.json", JSON.stringify(c.content), "");
+                imported++;
+              } catch (e) {
+                skipped.push(`${c.file || "workbuddy.json"}：${errText(e)}`);
+              }
+            }
+          }
+          await reload();
+          await loadDraft();
+          if (skipped.length) toast.warn(t("配置已导入，{n} 份凭证跳过", { n: skipped.length }), skipped[0]);
+          else toast.success(t("配置已导入"), imported ? t("已导入 {n} 份凭证", { n: imported }) : file.name);
+          broadcastRefresh();
+        } catch (e) {
+          toast.error(t("导入失败"), errText(e));
+        } finally {
+          setBusy(null);
+        }
+        return;
+      }
       const ok = await confirmDialog({
         title: t("导入配置"),
         desc: t("将用「{name}」覆盖当前配置（网关运行中将自动重启）。", { name: file.name }),
@@ -1828,10 +1940,15 @@ function DataSection({
           </div>
         </div>
         <div className="card-b">
-          <SetItem title={t("导出配置")} desc={t("下载当前 config.json（不含登录凭证）")}>
-            <button className="btn btn-ghost sm" disabled={busy === "export"} onClick={doExport}>
-              {busy === "export" ? <Loader2 size={13} className="spin" /> : <Download size={13} strokeWidth={2} />} {t("导出")}
-            </button>
+          <SetItem title={t("导出配置")} desc={t("下载当前 config.json；「含凭证导出」会把登录凭证一并打包（可选密码加密）")}>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-ghost sm" disabled={busy === "export"} onClick={doExport}>
+                {busy === "export" ? <Loader2 size={13} className="spin" /> : <Download size={13} strokeWidth={2} />} {t("导出")}
+              </button>
+              <button className="btn btn-soft sm" disabled={busy === "export"} onClick={doExportWithCreds}>
+                {busy === "export" ? <Loader2 size={13} className="spin" /> : <Download size={13} strokeWidth={2} />} {t("含凭证导出")}
+              </button>
+            </div>
           </SetItem>
           <SetItem title={t("导入配置")} desc={t("从 JSON 文件覆盖当前配置")}>
             <button className="btn btn-ghost sm" disabled={busy === "import"} onClick={doImport}>

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ============================================================
@@ -196,21 +199,22 @@ func (s *Service) ClientSwitchAccount(uid string) error {
 	}
 
 	// 3. 写入目标账号凭证到官方登录位（原子写）
-	switchStep("write", fmt.Sprintf("写入账号 %s 的登录凭证", acc.Nickname))
+	// v5.6+ 走嵌套 session（auth/account），凭证保护 off 时 codec 按字符串透传。
+	// 不能直接把池扁平文件塞过去，否则 session.auth?.accessToken 为空、被判定为未登录。
+	switchStep("write", fmt.Sprintf("写入账号 %s 的登录凭证（嵌套 session）", acc.Nickname))
 	cred, err := LoadUpstreamCred(s.AuthDir(), acc.Credential)
 	if err != nil {
 		return fmt.Errorf("读取账号凭证失败: %w", err)
 	}
-	_ = cred // LoadUpstreamCred 校验凭证可解析；写入用原始文件内容，避免字段重排
-	raw, err := os.ReadFile(filepath.Join(s.AuthDir(), acc.Credential))
+	payload, err := buildOfficialAuthFile(cred, acc.Nickname)
 	if err != nil {
-		return fmt.Errorf("读取凭证文件失败: %w", err)
+		return fmt.Errorf("构造官方登录文件失败: %w", err)
 	}
 	tmp := pre.OfficialAuthFile + ".tmp"
 	if err := os.MkdirAll(filepath.Dir(pre.OfficialAuthFile), 0o700); err != nil {
 		return fmt.Errorf("创建登录目录失败: %w", err)
 	}
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+	if err := os.WriteFile(tmp, payload, 0o600); err != nil {
 		return fmt.Errorf("写入登录文件失败: %w", err)
 	}
 	if err := os.Rename(tmp, pre.OfficialAuthFile); err != nil {
@@ -225,6 +229,79 @@ func (s *Service) ClientSwitchAccount(uid string) error {
 	switchStep("done", "切换完成，客户端将以 "+acc.Nickname+" 的身份启动")
 	s.Store().Audit("client.switch", uid, "official="+pre.OfficialAuthFile)
 	return nil
+}
+
+// buildOfficialAuthFile 从池里的 UpstreamCred 构造 WorkBuddy v5.6+ 客户端期望的
+// 嵌套 session 认证文件内容。Pool 凭证本身是扁平（OAuthCredentialJSON 形态）或嵌套，
+// 经 LoadUpstreamCred 抽出统一字段后再按官方 schema 重组。
+//
+// 字段集对齐 WorkBuddy 真机 backup（Data/Public/auth 下历史 .info），关键差异是：
+//   - auth.expiresAt / auth.refreshExpiresAt / auth.lastRefreshTime 单位是毫秒，
+//     池里是秒（Unix），写入要 × 1000；
+//   - refreshExpiresIn / expiresIn 单位是秒；
+//   - 加密信封（$wbEncrypted）由官方在凭证保护策略为 fields/files 时自行生成，
+//     BuddyBot 拿不到 safeStorage key，因此不写加密字段，让官方按 off 策略直接吃 plaintext。
+//
+// nickname 单独传入：LoadUpstreamCred 不解 token payload，取自账号视图，避免重复解析。
+// 派生字段（sessionState / scope / notBeforePolicy）按官方历史 backup 的口径填——
+// 官方客户端首次读 session 不会校验这些，但留齐可避免后续版本差异打回。
+func buildOfficialAuthFile(cred *UpstreamCred, nickname string) ([]byte, error) {
+	if cred == nil {
+		return nil, fmt.Errorf("凭证为空")
+	}
+	if strings.TrimSpace(cred.AccessToken) == "" {
+		return nil, fmt.Errorf("凭证缺少 accessToken")
+	}
+	now := time.Now()
+	nowSec := now.Unix()
+	nowMs := now.UnixMilli()
+
+	// refreshToken / accessToken 有效期都靠 accessToken.expiresAt 兜底；
+	// refreshExpiresAt 不知道，按官方常见策略给一年（实际 refresh 多久以官方续期
+	// 行为为准；写短一点比写过长安全——写过长也不会更久）。
+	const refreshLifetimeSec = 365 * 24 * 3600
+	refreshExpMs := nowMs + int64(refreshLifetimeSec)*1000
+
+	expiresMs := cred.ExpiresAtUnix * 1000
+	expiresIn := cred.ExpiresAtUnix - nowSec
+	if expiresIn < 0 {
+		expiresIn = 0
+	}
+
+	auth := map[string]any{
+		"accessToken":       cred.AccessToken,
+		"refreshToken":      cred.RefreshToken,
+		"tokenType":         "Bearer",
+		"domain":            cred.Domain,
+		"expiresAt":         expiresMs,       // ms
+		"expiresIn":         expiresIn,       // sec，剩余秒（≤0 视为已过期）
+		"refreshExpiresIn":  refreshLifetimeSec,
+		"refreshExpiresAt":  refreshExpMs,    // ms
+		"lastRefreshTime":   nowMs,           // ms，官方按当前时间更新
+		"scope":             "openid profile offline_access email",
+		"sessionState":      uuid.NewString(),
+		"notBeforePolicy":   nowSec,
+	}
+
+	account := map[string]any{
+		"uid":           cred.UID,
+		"nickname":      nickname,
+		"type":          "personal",
+		"lastLogin":     true,
+		"isCreator":     false,
+		"pluginEnabled": true,
+	}
+
+	// 历史登录账号列表：仅含当前一个（其他账号 BuddyBot 无从得知，避免假数据）
+	accounts := []map[string]any{account}
+
+	sess := map[string]any{
+		"auth":     auth,
+		"account":  account,
+		"accounts": accounts,
+	}
+
+	return json.MarshalIndent(sess, "", "  ")
 }
 
 // clientProcessRunning 探测官方客户端是否在运行（按二进制路径匹配）

@@ -11,6 +11,7 @@ import { en as enLogs } from "./en-logs";
 import { en as enPrompts } from "./en-prompts";
 import { en as enClientTokens } from "./en-clienttokens";
 import { en as enPlugins } from "./en-plugins";
+import { en as enFerry } from "./en-ferry";
 
 /**
  * 轻量 i18n：中文原文即 key。
@@ -38,6 +39,7 @@ const DICT: Record<string, string> = Object.assign(
   enPrompts,
   enClientTokens,
   enPlugins,
+  enFerry,
 );
 
 const STORAGE_KEY = "apiary.lang";

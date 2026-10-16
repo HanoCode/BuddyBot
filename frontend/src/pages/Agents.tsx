@@ -24,7 +24,7 @@ const AGENT_DESC: Record<string, string> = {
   minimax: "在 ~/.minimax/config.yaml 写入 provider.workbuddy（@ai-sdk/openai-compatible）",
   crush: "在 ~/.config/crush/crush.json 写入 provider.workbuddy（type=openai）",
   aider: "在 ~/.aider.conf.yml 写入 model（openai/ 前缀）与 openai-api-base / openai-api-key",
-  zed: "在 ~/.config/zed/settings.json 写入 language_models.openai_compatible.WorkBuddy",
+  zed: "在 Zed 的 settings.json 写入 language_models.openai_compatible.WorkBuddy；密钥写入系统凭据存储（macOS 钥匙串 / Windows 凭据管理器），Zed 不再从配置文件读 api_key",
   continue: "在 ~/.continue/config.yaml 的 models[] 追加网关模型条目（其余条目原样保留）",
 };
 

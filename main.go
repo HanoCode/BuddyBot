@@ -70,6 +70,7 @@ func main() {
 		application.NewService(api.NewClientSwitchAPI(coreService)),
 		application.NewService(api.NewDataMigrateAPI()),
 		application.NewService(api.NewAgentsAPI(coreService)),
+		application.NewService(api.NewFerryAPI(coreService)),
 		application.NewService(api.NewPluginsAPI(coreService)),
 		application.NewService(api.NewConfigAPI(coreService)),
 		application.NewService(api.NewGatewayAPI(coreService)),

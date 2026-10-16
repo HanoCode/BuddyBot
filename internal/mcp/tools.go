@@ -244,7 +244,8 @@ func estimateCostText(svc *core.Service, args map[string]any) (string, error) {
 		}
 	}
 
-	table := core.NewPriceTable(svc.ModelPrices())
+	// EffectivePrices 与统计页同口径：免费额度模型按 0 元计，而不是「未定价」
+	table := core.NewPriceTable(svc.EffectivePrices())
 	cost, priced := table.Cost(model, int(in), int(out), int(read), int(write))
 	if !priced {
 		return fmt.Sprintf("模型 %s 在单价表中未配置单价（设置 → 模型单价 可补），无法估算。", model), nil

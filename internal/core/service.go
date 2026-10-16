@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"workbuddy-desktop/internal/ferry"
 )
 
 // ScheduleConfig 定时任务配置
@@ -169,7 +171,21 @@ type Config struct {
 	Inject        InjectConfig   `json:"inject"`
 	SkillHub      SkillHubConfig `json:"skillhub"`
 	Plugins       PluginsConfig  `json:"plugins"`
+	Ferry         FerryConfig    `json:"ferry"`
 }
+
+// FerryConfig 免费额度摆渡（OpenCode 免费模型池接入）配置。
+//
+// Enabled 默认 false：启用会在数据目录里下载并托管一份隔离的 OpenCode 运行时，
+// 属于必须由用户明确选择的重操作，不做静默下载。
+type FerryConfig struct {
+	Enabled bool `json:"enabled"`
+	// Concurrency 探测并发度（默认 3，上限 6）：上游免费池对并发敏感
+	Concurrency int `json:"concurrency"`
+}
+
+// DefaultFerryConcurrency 探测并发度默认值
+const DefaultFerryConcurrency = 3
 
 // SkillHubConfig SkillHub 技能市场配置
 type SkillHubConfig struct {
@@ -208,6 +224,8 @@ type Service struct {
 	awake      *Awake
 	appReady   bool
 	flushStop  chan struct{} // 存储合并落盘协程停止信号
+	ferryOnce  sync.Once
+	ferry      *ferry.Manager // 免费额度摆渡（OpenCode 免费模型池）
 }
 
 // NewService 创建服务（数据目录 ~/.buddybot，旧版本目录首次启动自动迁移）
@@ -231,7 +249,8 @@ func NewServiceAt(dir string) *Service {
 	s.mirror = newRedisMirror()
 	s.mirror.configure(s.GetConfig().Redis)
 	s.gateway = NewGateway(s)
-	s.stats = NewStats(s.store, s.Accounts, s.ModelPrices)
+	// EffectivePrices（而非 ModelPrices）:免费额度模型要以「0 元」而非「未定价」计入金额口径
+	s.stats = NewStats(s.store, s.Accounts, s.EffectivePrices)
 	s.scheduler = NewScheduler(s)
 	s.ApplyAwakeOnStart()
 	return s
@@ -276,6 +295,7 @@ func DefaultConfig() *Config {
 		Inject:        InjectConfig{Port: 9223, DNDAutoConfirm: true, Theme: ThemeConfig{Mask: 30, TextShadow: true}},
 		SkillHub:      SkillHubConfig{CacheTTLMinutes: DefaultSkillHubCacheTTLMinutes},
 		Plugins:       PluginsConfig{RulesText: DefaultRulesText(), SafetyAllowlist: DefaultSafetyAllowlist()},
+		Ferry:         FerryConfig{Enabled: false, Concurrency: DefaultFerryConcurrency},
 	}
 }
 
@@ -364,6 +384,10 @@ func (s *Service) StartFlusher() {
 // Shutdown 应用退出：停网关/调度器与后台协程，并把未落盘数据写盘（务必最终一致）
 func (s *Service) Shutdown() {
 	s.Stop()
+	// 免费额度的隔离 OpenCode 必须随进程一起收场，不能留下孤儿进程
+	if s.ferry != nil {
+		s.ferry.Stop()
+	}
 	if s.flushStop != nil {
 		select {
 		case <-s.flushStop:
@@ -619,6 +643,14 @@ func (s *Service) LoadConfig() error {
 	// 仅 safety_allowlist 为 JSON null（视同「从未设置」）时补默认。
 	if cfg.Plugins.SafetyAllowlist == nil {
 		cfg.Plugins.SafetyAllowlist = DefaultSafetyAllowlist()
+	}
+	// 免费额度摆渡：enabled 零值即默认（不启用），不做回落；
+	// concurrency 缺键/非法时回落默认并夹到上限（上游免费池对并发敏感）
+	if cfg.Ferry.Concurrency <= 0 {
+		cfg.Ferry.Concurrency = DefaultFerryConcurrency
+	}
+	if cfg.Ferry.Concurrency > 6 {
+		cfg.Ferry.Concurrency = 6
 	}
 	s.normalizePaths(cfg)
 	s.mu.Lock()

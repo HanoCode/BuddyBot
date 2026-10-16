@@ -8,6 +8,7 @@ import * as ChatAPI from "./chatapi.js";
 import * as ClientSwitchAPI from "./clientswitchapi.js";
 import * as ConfigAPI from "./configapi.js";
 import * as DataMigrateAPI from "./datamigrateapi.js";
+import * as FerryAPI from "./ferryapi.js";
 import * as GatewayAPI from "./gatewayapi.js";
 import * as InjectAPI from "./injectapi.js";
 import * as KeysAPI from "./keysapi.js";
@@ -26,6 +27,7 @@ export {
     ClientSwitchAPI,
     ConfigAPI,
     DataMigrateAPI,
+    FerryAPI,
     GatewayAPI,
     InjectAPI,
     KeysAPI,

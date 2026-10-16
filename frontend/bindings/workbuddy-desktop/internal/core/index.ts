@@ -24,6 +24,7 @@ export type {
     DataMigrationDiag,
     DataMigrationResult,
     DayModelStat,
+    FerryConfig,
     HourStat,
     InjectConfig,
     InstalledSkill,

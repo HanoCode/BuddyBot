@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -44,6 +45,16 @@ const (
 	agentProviderName = "WorkBuddy"
 	claudeSlotLimit   = 4 // Claude Code/Desktop 只有 4 个模型槽位
 	agentDefaultModel = "deepseek-v4-flash"
+)
+
+// Zed 的密钥不再写在 settings.json 里（新版 openai_compatible 已无 api_key 字段，写进去
+// 会被静默丢弃，界面表现为模型选择器「No matches」），改由系统凭据存储提供，各平台实现见
+// agents_zed_credential_{darwin,windows,other}.go：macOS 写登录钥匙串、Windows 写凭据管理器，
+// 其余平台由用户设 WORKBUDDY_API_KEY 环境变量。
+// 声明成变量是为了让测试能替换掉真实凭据读写。
+var (
+	zedStoreCredential = zedCredentialStore
+	zedHasCredential   = zedCredentialCheck
 )
 
 // ---- 客户端配置路径（macOS 优先，env 覆盖与参考实现一致） ----
@@ -131,7 +142,17 @@ func aiderConfigPath() string {
 }
 
 func zedSettingsPath() string {
-	return filepath.Join(agentEnvDir("ZED_CONFIG_DIR", filepath.Join(".config", "zed")), "settings.json")
+	if v := strings.TrimSpace(os.Getenv("ZED_CONFIG_DIR")); v != "" {
+		return filepath.Join(v, "settings.json")
+	}
+	// Windows 的配置目录是 %APPDATA%\Zed（见 Zed crates/paths/src/paths.rs 的 config_dir），
+	// 不是 ~/.config/zed，写错位置等于没接入。
+	if runtime.GOOS == "windows" {
+		if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
+			return filepath.Join(appData, "Zed", "settings.json")
+		}
+	}
+	return filepath.Join(agentHome(), ".config", "zed", "settings.json")
 }
 
 func continueConfigPath() string {
@@ -182,7 +203,13 @@ func DetectAgents(baseURL, apiKey string) []AgentTarget {
 		if installed {
 			if text, err := os.ReadFile(t.path); err == nil {
 				s := string(text)
-				configured = strings.Contains(s, baseURL) && (apiKey == "" || strings.Contains(s, apiKey))
+				if t.id == "zed" {
+					// Zed 的密钥不在配置文件里（新版从系统凭据存储读），只校验 api_url
+					// 与凭据是否存在，否则会永远显示「未接入」。
+					configured = strings.Contains(s, baseURL+"/v1") && zedHasCredential(baseURL+"/v1")
+				} else {
+					configured = strings.Contains(s, baseURL) && (apiKey == "" || strings.Contains(s, apiKey))
+				}
 			}
 		}
 		note := ""
@@ -488,7 +515,16 @@ func ApplyAgent(id, baseURL, apiKey string, models []string, backupRoot string) 
 			return nil, fmt.Errorf("写入 Aider 配置失败: %w", err)
 		}
 	case "zed":
-		// Zed：language_models.openai_compatible.<provider>，api_url 指向网关
+		// Zed：language_models.openai_compatible.<provider>，api_url 指向网关。
+		// 新版 Zed 的 openai_compatible 已没有 api_key 字段（写进去被静默丢弃，界面表现为
+		// 模型选择器「No matches」），密钥改由系统凭据提供：macOS 写登录钥匙串
+		// （Internet Password，server=api_url、account=Bearer，与 Zed 自己写入的形态一致），
+		// 其它平台 Zed 读 {PROVIDER}_API_KEY 环境变量（见平台文件）。
+		// 下方整体替换 provider 条目，历史遗留的 api_key 一并被清掉。
+		apiURL := baseURL + "/v1"
+		if err := zedStoreCredential(apiURL, apiKey); err != nil {
+			return nil, fmt.Errorf("写入 Zed 密钥失败: %w", err)
+		}
 		if err := writeAgentJSON(files[0], func(root map[string]any) {
 			lm, _ := root["language_models"].(map[string]any)
 			if lm == nil {
@@ -506,8 +542,7 @@ func ApplyAgent(id, baseURL, apiKey string, models []string, backupRoot string) 
 				})
 			}
 			oc[agentProviderName] = map[string]any{
-				"api_url":          baseURL + "/v1",
-				"api_key":          apiKey,
+				"api_url":          apiURL,
 				"available_models": list,
 			}
 			lm["openai_compatible"] = oc
@@ -702,22 +737,130 @@ func RestoreAgentBackup(target, backupID, backupRoot string) (int, error) {
 
 // ---- 文件读写工具 ----
 
-// writeAgentJSON 读取现有 JSON（缺失/损坏时从空对象开始），交给 mutate 修改后原子写回
+// writeAgentJSON 读取现有 JSON（缺失/损坏时从空对象开始），交给 mutate 修改后原子写回。
+// 允许 JSONC 输入：Zed 的 settings.json 等客户端配置文件本身就是带注释的 JSONC，
+// 严格解析会把「用户没做错任何事」的合法配置判成损坏。写回时保留文件原有的前导注释块。
 func writeAgentJSON(path string, mutate func(root map[string]any)) error {
 	root := map[string]any{}
+	prefix := ""
 	if text := readAgentFile(path); strings.TrimSpace(text) != "" {
-		parsed, err := decodeJSONObject(text)
-		if err != nil {
-			return fmt.Errorf("现有配置不是合法 JSON（请先修复或手动备份）: %w", err)
+		var body string
+		prefix, body = splitJSONC(text)
+		if strings.TrimSpace(body) != "" {
+			parsed, err := decodeJSONObject(body)
+			if err != nil {
+				return fmt.Errorf("现有配置不是合法 JSON（请先修复或手动备份）: %w", err)
+			}
+			root = parsed
 		}
-		root = parsed
 	}
 	mutate(root)
 	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile(path, string(out)+"\n")
+	return atomicWriteFile(path, prefix+string(out)+"\n")
+}
+
+// splitJSONC 把 JSONC 文本切成「前导注释块」与「等价严格 JSON」两部分。
+//
+// 处理三件事（全都在字符串字面量之外才生效，`"http://x"` 里的 // 不会被当成注释）：
+//  1. 去掉 // 行注释与 /* */ 块注释；
+//  2. 去掉 } / ] 前的尾随逗号；
+//  3. 记下正文起点，把之前的注释原样留作前缀 —— Zed 的 settings.json 开头就是一段说明注释，
+//     接入时把它删掉属于「顺手改了别的东西」。
+//
+// 已知取舍：正文内部（字段行尾）的注释不保留，会被规范化掉；写入前有备份可回滚。
+func splitJSONC(text string) (prefix, body string) {
+	var b strings.Builder
+	i, n := 0, len(text)
+	leading := true // 仍在正文之前（只遇到空白与注释）
+	prefixEnd := 0
+	for i < n {
+		c := text[i]
+		if c == '"' { // 字符串字面量整体照抄
+			j := i + 1
+			for j < n {
+				if text[j] == '\\' {
+					j += 2
+					continue
+				}
+				if text[j] == '"' {
+					j++
+					break
+				}
+				j++
+			}
+			if leading {
+				leading, prefixEnd = false, i
+			}
+			b.WriteString(text[i:min(j, n)])
+			i = j
+			continue
+		}
+		switch {
+		case c == '/' && i+1 < n && text[i+1] == '/':
+			for i < n && text[i] != '\n' {
+				i++
+			}
+			continue
+		case c == '/' && i+1 < n && text[i+1] == '*':
+			i += 2
+			for i < n && !(text[i] == '*' && i+1 < n && text[i+1] == '/') {
+				i++
+			}
+			i = min(i+2, n)
+			continue
+		case c == ' ' || c == '\t' || c == '\r' || c == '\n':
+			if leading { // 前导空白由 prefix 承载
+				i++
+				continue
+			}
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		if leading {
+			leading, prefixEnd = false, i
+		}
+		if c == ',' {
+			if k := nextSignificantJSONC(text, i+1); k < n && (text[k] == '}' || text[k] == ']') {
+				i++ // 尾随逗号：丢掉，不留空行
+				continue
+			}
+		}
+		b.WriteByte(c)
+		i++
+	}
+	if leading { // 整个文件只有注释/空白
+		return text, ""
+	}
+	return text[:prefixEnd], b.String()
+}
+
+// nextSignificantJSONC 取 from 起第一个非空白、非注释字符的下标（到末尾返回 len(text)）
+func nextSignificantJSONC(text string, from int) int {
+	n := len(text)
+	for i := from; i < n; {
+		c := text[i]
+		switch {
+		case c == ' ' || c == '\t' || c == '\r' || c == '\n':
+			i++
+		case c == '/' && i+1 < n && text[i+1] == '/':
+			for i < n && text[i] != '\n' {
+				i++
+			}
+		case c == '/' && i+1 < n && text[i+1] == '*':
+			i += 2
+			for i < n && !(text[i] == '*' && i+1 < n && text[i+1] == '/') {
+				i++
+			}
+			i = min(i+2, n)
+		default:
+			return i
+		}
+	}
+	return n
 }
 
 // decodeJSONObject 解析 JSON 对象。UseNumber 让数字以原文形式保留——

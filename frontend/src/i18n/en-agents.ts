@@ -29,8 +29,8 @@ export const en: Record<string, string> = {
     "Writes provider.workbuddy to ~/.config/crush/crush.json (type=openai)",
   "在 ~/.aider.conf.yml 写入 model（openai/ 前缀）与 openai-api-base / openai-api-key":
     "Writes model (openai/ prefix) and openai-api-base / openai-api-key to ~/.aider.conf.yml",
-  "在 ~/.config/zed/settings.json 写入 language_models.openai_compatible.WorkBuddy":
-    "Writes language_models.openai_compatible.WorkBuddy to ~/.config/zed/settings.json",
+  "在 Zed 的 settings.json 写入 language_models.openai_compatible.WorkBuddy；密钥写入系统凭据存储（macOS 钥匙串 / Windows 凭据管理器），Zed 不再从配置文件读 api_key":
+    "Writes language_models.openai_compatible.WorkBuddy to Zed's settings.json; the API key goes into the system credential store (macOS keychain / Windows Credential Manager), as Zed no longer reads api_key from the config file.",
   "在 ~/.continue/config.yaml 的 models[] 追加网关模型条目（其余条目原样保留）":
     "Appends gateway model entries to models[] in ~/.continue/config.yaml (other entries kept as-is)",
 

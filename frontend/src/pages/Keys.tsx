@@ -30,6 +30,9 @@ const EMPTY: FormState = {
 export default function Keys() {
   const [form, setForm] = useState<FormState | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  // 明文展开状态（按密钥 id）。部分运行环境 navigator.clipboard 不可用，
+  // 因此明文不能只靠「复制到剪贴板」触达——点击掩码即展开，可手动选中复制。
+  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [usage, setUsage] = useState<{ key: KeyView; data: KeyUsage } | null>(null);
 
@@ -70,6 +73,15 @@ export default function Keys() {
       return;
     }
     await copy(k.key, tag);
+  };
+
+  // 明文可切换展开（不依赖剪贴板）。旧密钥只有摘要，展开无意义，仍走重建提示。
+  const toggleReveal = (k: KeyView) => {
+    if (!k.key) {
+      toast.error(t("该密钥仅存摘要，明文不可恢复"), t("请删除后重新创建一个密钥，再复制新明文"));
+      return;
+    }
+    setRevealed((s) => ({ ...s, [k.id]: !s[k.id] }));
   };
 
   const submit = async () => {
@@ -213,7 +225,7 @@ export default function Keys() {
               <>
                 <select
                   className="mini-input mono"
-                  style={{ flex: 1, fontSize: 12.5, minWidth: 0 }}
+                  style={{ flex: "none", width: 190, fontSize: 12.5, minWidth: 0 }}
                   value={selKey.id}
                   onChange={(e) => setKeyId(e.target.value)}
                   data-tip={t("选择要用于示例与复制的密钥")}
@@ -222,6 +234,14 @@ export default function Keys() {
                     <option key={k.id} value={k.id}>{k.name}（{k.mask}）</option>
                   ))}
                 </select>
+                <span
+                  className={`key-reveal${revealed[selKey.id] ? " on" : ""}`}
+                  style={{ flex: 1, minWidth: 0 }}
+                  data-tip={selKey.key ? (revealed[selKey.id] ? t("点击隐藏") : t("点击显示明文")) : t("明文不可恢复：请重建密钥")}
+                  onClick={() => toggleReveal(selKey)}
+                >
+                  {revealed[selKey.id] ? selKey.key : selKey.mask}
+                </span>
                 <button className="icon-btn" data-tip={selKey.key ? t("复制完整密钥") : t("明文不可恢复：请重建密钥")} onClick={() => copyKey(selKey, `connkey-${selKey.id}`)}>
                   {copied === `connkey-${selKey.id}` ? <Check size={12} strokeWidth={2.4} /> : <Copy size={12} strokeWidth={2} />}
                 </button>
@@ -282,7 +302,13 @@ export default function Keys() {
                     </div>
                   </td>
                   <td className="mono">
-                    {k.mask}
+                    <span
+                      className={`key-reveal${revealed[k.id] ? " on" : ""}`}
+                      data-tip={k.key ? (revealed[k.id] ? t("点击隐藏") : t("点击显示明文")) : t("明文不可恢复：请重建密钥")}
+                      onClick={() => toggleReveal(k)}
+                    >
+                      {revealed[k.id] ? k.key : k.mask}
+                    </span>
                     <button
                       className="icon-btn"
                       style={{ width: 24, height: 24, verticalAlign: "middle" }}
@@ -360,7 +386,7 @@ export default function Keys() {
       </div>
 
       <div style={{ marginTop: 14, padding: "13px 16px", borderRadius: 12, background: "var(--primary-soft)", fontSize: 12.5, color: "var(--primary)", lineHeight: 1.7 }}>
-        {t("列表中的密钥显示为脱敏掩码，点击复制按钮即可复制完整明文密钥（仅保存在本机）。")}
+        {t("列表中的密钥默认显示为脱敏掩码，点击掩码即展开完整明文（可直接选中复制，明文仅保存在本机）。")}
         {t("网关鉴权使用 SHA-256 摘要。配额按网关实际计费口径累加（每 1000 token 记 1 积分），")}
         {t("Token 或积分配额用尽后网关直接返回 429。白名单外的模型返回 403，IP 不匹配返回 403。")}
       </div>

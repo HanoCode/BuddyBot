@@ -379,6 +379,7 @@ export interface Config {
     "inject": InjectConfig;
     "skillhub": SkillHubConfig;
     "plugins": PluginsConfig;
+    "ferry": FerryConfig;
 }
 
 /**
@@ -460,6 +461,21 @@ export interface DataMigrationResult {
 export interface DayModelStat {
     "date": string;
     "byModel": { [_ in string]?: number } | null;
+}
+
+/**
+ * FerryConfig 免费额度摆渡（OpenCode 免费模型池接入）配置。
+ * 
+ * Enabled 默认 false：启用会在数据目录里下载并托管一份隔离的 OpenCode 运行时，
+ * 属于必须由用户明确选择的重操作，不做静默下载。
+ */
+export interface FerryConfig {
+    "enabled": boolean;
+
+    /**
+     * Concurrency 探测并发度（默认 3，上限 6）：上游免费池对并发敏感
+     */
+    "concurrency": number;
 }
 
 /**

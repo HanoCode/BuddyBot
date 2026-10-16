@@ -553,7 +553,7 @@ func (s *Service) ClientTokenStats(days int, force bool) (*ClientTokenStats, err
 	}
 
 	// 分源汇总（各自归因）+ 合计
-	pt := NewPriceTable(s.ModelPrices())
+	pt := NewPriceTable(s.EffectivePrices())
 	unpriced := map[string]struct{}{}
 	for i := range perSource {
 		sum := &perSource[i].src.Summary

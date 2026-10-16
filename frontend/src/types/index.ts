@@ -109,6 +109,14 @@ export type {
 export type { AccountBackup } from "../../bindings/workbuddy-desktop/internal/inject/models";
 export type { Status as InjectStatus } from "../../bindings/workbuddy-desktop/internal/inject/models";
 
+/** 免费额度摆渡（internal/ferry）：Status 与 DOM 的 Status 同名，统一加 Ferry 前缀 */
+export type {
+  ModelView as FerryModelView,
+  Status as FerryStatus,
+  VariantOption as FerryVariantOption,
+  Verdict as FerryVerdict,
+} from "../../bindings/workbuddy-desktop/internal/ferry/models";
+
 /** 账号状态（与后端 deriveStatus 的取值一致） */
 export type AccountStatus = "online" | "cooldown" | "expired" | "disabled" | "unknown" | "invalid" | "relogin";
 

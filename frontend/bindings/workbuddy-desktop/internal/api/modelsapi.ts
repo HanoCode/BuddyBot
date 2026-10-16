@@ -16,6 +16,11 @@ import * as core$0 from "../core/models.js";
 
 /**
  * List 返回模型清单：目录收录（含 context_length / max_output_tokens）+ 本机真实用量
+ * + 当前正在对外提供的免费额度模型。
+ * 
+ * 免费额度模型必须出现在这里：客户端接入（智能体接入）与密钥范围都是从这份清单里选模型的，
+ * 清单里没有就等于「网关能提供但用户选不到」，功能等于没接上。
+ * 只列当前确实可用的（探测通过且未被取消勾选），避免选到一个会 404 的 id。
  */
 export function List(): $CancellablePromise<core$0.ModelInfo[] | null> {
     return $Call.ByID(2258504334);

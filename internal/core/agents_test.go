@@ -8,6 +8,28 @@ import (
 	"testing"
 )
 
+// zedCredCall 记录一次 Zed 凭据写入的参数
+type zedCredCall struct {
+	apiURL string
+	apiKey string
+}
+
+// stubZedCredential 替换掉真实的系统凭据读写（测试绝不能碰用户钥匙串），
+// 并返回记录器；想模拟「凭据不存在」时改 has 的返回值即可。
+func stubZedCredential(t *testing.T, has bool) (*[]zedCredCall, *bool) {
+	t.Helper()
+	calls := &[]zedCredCall{}
+	exists := &has
+	origStore, origCheck := zedStoreCredential, zedHasCredential
+	zedStoreCredential = func(apiURL, apiKey string) error {
+		*calls = append(*calls, zedCredCall{apiURL: apiURL, apiKey: apiKey})
+		return nil
+	}
+	zedHasCredential = func(string) bool { return *exists }
+	t.Cleanup(func() { zedStoreCredential, zedHasCredential = origStore, origCheck })
+	return calls, exists
+}
+
 func TestSetTOMLTopLevel(t *testing.T) {
 	// 空文件：追加
 	got := setTOMLTopLevel("", "model", `"gpt-5"`)
@@ -264,7 +286,9 @@ func TestApplyAgentOpenAICompatibleGroup(t *testing.T) {
 		}
 	}
 
-	// Zed：language_models.openai_compatible.WorkBuddy
+	// Zed：language_models.openai_compatible.WorkBuddy（密钥走系统凭据，见
+	// TestApplyAgentZedCredential；这里只校验配置文件形态）
+	zedCalls, _ := stubZedCredential(t, true)
 	if _, err := ApplyAgent("zed", base, key, ms, backupRoot); err != nil {
 		t.Fatalf("zed 接入失败: %v", err)
 	}
@@ -273,11 +297,17 @@ func TestApplyAgentOpenAICompatibleGroup(t *testing.T) {
 		t.Fatalf("zed 不是合法 JSON: %v", err)
 	}
 	zw := zd["language_models"].(map[string]any)["openai_compatible"].(map[string]any)["WorkBuddy"].(map[string]any)
-	if zw["api_url"] != base+"/v1" || zw["api_key"] != key {
+	if zw["api_url"] != base+"/v1" {
 		t.Fatalf("zed provider 字段不符: %v", zw)
+	}
+	if _, ok := zw["api_key"]; ok {
+		t.Fatalf("zed 不应再写 api_key（新版 Zed 会丢弃该字段）: %v", zw)
 	}
 	if len(zw["available_models"].([]any)) != 2 {
 		t.Fatalf("zed 模型未全量写入: %v", zw["available_models"])
+	}
+	if len(*zedCalls) != 1 || (*zedCalls)[0].apiURL != base+"/v1" || (*zedCalls)[0].apiKey != key {
+		t.Fatalf("zed 凭据写入参数不符: %+v", *zedCalls)
 	}
 
 	// Continue：config.yaml models[]，二次写入应替换旧条目且保留外部条目
@@ -313,6 +343,139 @@ func TestApplyAgentOpenAICompatibleGroup(t *testing.T) {
 				t.Fatalf("%s 应为已安装+已接入: %+v", tg.ID, tg)
 			}
 		}
+	}
+}
+
+// Zed 的 settings.json 本身就是 JSONC（注释 + 尾随逗号），严格 JSON 解析会误判为「配置损坏」
+func TestApplyAgentJSONCConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ZED_CONFIG_DIR", filepath.Join(home, ".config", "zed"))
+	seed := "// Zed settings\n" +
+		"//\n" +
+		"// For information on how to configure Zed, see the Zed\n" +
+		"// documentation: https://zed.dev/docs/configuring-zed\n" +
+		"{\n" +
+		"  \"session\": {\n" +
+		"    \"trust_all_worktrees\": true\n" +
+		"  },\n" +
+		"  \"theme\": {\n" +
+		"    \"mode\": \"system\",\n" +
+		"    \"light\": \"One Light\", // 行内注释\n" +
+		"  },\n" +
+		"  \"ui_font_size\": 16,\n" +
+		"  \"notes\": \"see https://zed.dev for docs\", /* 块注释 */\n" +
+		"}\n"
+	if err := os.MkdirAll(filepath.Dir(zedSettingsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(zedSettingsPath(), []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	base, key := "http://127.0.0.1:7863", "sk-jsonc"
+	stubZedCredential(t, true)
+	if _, err := ApplyAgent("zed", base, key, []string{"glm-5"}, filepath.Join(home, "backups")); err != nil {
+		t.Fatalf("JSONC 配置应能接入: %v", err)
+	}
+	text := string(mustRead(t, zedSettingsPath()))
+	// 前导注释块保留；正文内的注释按既定取舍被规范化掉
+	if !strings.Contains(text, "// documentation: https://zed.dev/docs/configuring-zed") {
+		t.Fatalf("前导注释块被丢弃: %s", text)
+	}
+	var zd map[string]any
+	// 写回结果 = 前导注释 + 严格 JSON，按 JSONC 拆一次再解析
+	_, body := splitJSONC(text)
+	if err := json.Unmarshal([]byte(body), &zd); err != nil {
+		t.Fatalf("写回结果的正文不是严格 JSON: %v\n%s", err, text)
+	}
+	// 原有设置原样保留，且字符串里的 // 没被误删
+	if zd["ui_font_size"].(float64) != 16 || zd["notes"] != "see https://zed.dev for docs" {
+		t.Fatalf("无关字段被破坏: %v", zd)
+	}
+	zw := zd["language_models"].(map[string]any)["openai_compatible"].(map[string]any)["WorkBuddy"].(map[string]any)
+	if zw["api_url"] != base+"/v1" {
+		t.Fatalf("zed provider 字段不符: %v", zw)
+	}
+	if _, ok := zw["api_key"]; ok {
+		t.Fatalf("zed 不应再写 api_key: %v", zw)
+	}
+}
+
+// Zed 的密钥走系统凭据：老配置里的 api_key 必须被清掉（新版 Zed 会丢弃该字段，
+// 留着只会让人以为密钥还在配置文件里），并且探测要按凭据是否存在给出结论。
+func TestApplyAgentZedCredential(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ZED_CONFIG_DIR", filepath.Join(home, ".config", "zed"))
+	seed := `{
+  "language_models": {
+    "openai_compatible": {
+      "WorkBuddy": {
+        "api_url": "http://127.0.0.1:7863/v1",
+        "api_key": "sk-legacy",
+        "available_models": [{"name": "glm-5", "display_name": "glm-5"}]
+      }
+    }
+  }
+}`
+	if err := os.MkdirAll(filepath.Dir(zedSettingsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(zedSettingsPath(), []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	base, key := "http://127.0.0.1:7863", "sk-cred"
+	calls, exists := stubZedCredential(t, true)
+	if _, err := ApplyAgent("zed", base, key, []string{"glm-5", "deep-model"}, filepath.Join(home, "backups")); err != nil {
+		t.Fatalf("zed 接入失败: %v", err)
+	}
+	if len(*calls) != 1 || (*calls)[0].apiURL != base+"/v1" || (*calls)[0].apiKey != key {
+		t.Fatalf("凭据写入参数不符: %+v", *calls)
+	}
+	text := string(mustRead(t, zedSettingsPath()))
+	if strings.Contains(text, "sk-legacy") || strings.Contains(text, "api_key") {
+		t.Fatalf("遗留 api_key 未清除: %s", text)
+	}
+	if !strings.Contains(text, base+"/v1") {
+		t.Fatalf("api_url 丢失: %s", text)
+	}
+
+	// 凭据在 → 已接入；凭据被移除（比如用户在钥匙串里删了）→ 未接入
+	var zedTarget AgentTarget
+	for _, tg := range DetectAgents(base, key) {
+		if tg.ID == "zed" {
+			zedTarget = tg
+		}
+	}
+	if !zedTarget.Configured {
+		t.Fatalf("凭据存在时应判定已接入: %+v", zedTarget)
+	}
+	*exists = false
+	var again AgentTarget
+	for _, tg := range DetectAgents(base, key) {
+		if tg.ID == "zed" {
+			again = tg
+		}
+	}
+	if again.Configured || !again.Installed {
+		t.Fatalf("凭据缺失时应为「未接入」而非「未安装」: %+v", again)
+	}
+}
+
+func TestSplitJSONC(t *testing.T) {
+	prefix, body := splitJSONC("// c\n{\n  \"a\": 1,\n}\n")
+	if prefix != "// c\n" {
+		t.Fatalf("前导注释块不符: %q", prefix)
+	}
+	if body != "{\n  \"a\": 1\n}\n" {
+		t.Fatalf("尾随逗号未清理: %q", body)
+	}
+	// 字符串里的 // 与 /* 不是注释；纯注释文件按空配置处理
+	if _, b := splitJSONC(`{"u":"http://x/*y*/,","n":1}`); b != `{"u":"http://x/*y*/,","n":1}` {
+		t.Fatalf("字符串字面量被误改: %q", b)
+	}
+	if p, b := splitJSONC("// only comments\n"); p != "// only comments\n" || b != "" {
+		t.Fatalf("纯注释文件处理不符: %q %q", p, b)
 	}
 }
 

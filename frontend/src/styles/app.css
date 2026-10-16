@@ -353,6 +353,19 @@ body {
 .chip-btn:hover .cp { opacity: .6; }
 .chip-btn .cp:hover { opacity: 1; background: rgba(127, 127, 127, .18); }
 
+/* ============ 明文密钥（点击掩码展开，不依赖剪贴板） ============ */
+.key-reveal {
+  display: inline-block; max-width: 280px; vertical-align: middle;
+  padding: 2px 6px; margin: -2px -6px; border-radius: 6px; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: background .15s var(--ease), color .15s var(--ease);
+}
+.key-reveal:hover { background: var(--surface-3); color: var(--text-1); }
+.key-reveal.on {
+  max-width: none; white-space: normal; word-break: break-all;
+  user-select: text; background: var(--primary-soft); color: var(--primary);
+}
+
 /* ============ Dashboard ============ */
 .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
 .kpi { padding: 17px 18px 14px; position: relative; overflow: hidden; transition: all .2s var(--ease); }

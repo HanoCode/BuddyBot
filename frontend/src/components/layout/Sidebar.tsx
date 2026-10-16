@@ -15,6 +15,7 @@ import {
   Sparkles,
   Download,
   ArrowUpRight,
+  Zap,
 } from "lucide-react";
 import { accountsApi, gatewayApi, systemApi } from "../../services/api";
 import { useT } from "../../i18n";
@@ -85,6 +86,7 @@ export default function Sidebar() {
       items: [
         { to: "/chat", label: t("聊天测试"), icon: <MessageSquare size={17} strokeWidth={1.9} /> },
         { to: "/agents", label: t("智能体接入"), icon: <Bot size={17} strokeWidth={1.9} /> },
+        { to: "/ferry", label: t("免费额度"), icon: <Zap size={17} strokeWidth={1.9} /> },
         { to: "/plugins", label: t("插件中心"), icon: <Package size={17} strokeWidth={1.9} /> },
         { to: "/skills", label: t("技能市场"), icon: <Puzzle size={17} strokeWidth={1.9} /> },
         { to: "/prompts", label: t("提效指令库"), icon: <Sparkles size={17} strokeWidth={1.9} /> },

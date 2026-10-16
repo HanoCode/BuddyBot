@@ -29,6 +29,7 @@ import type {
   CreditDetail,
   CreditLogPage,
   Dashboard,
+  FerryStatus,
   GatewayConfig,
   GatewayStatus,
   ImportResult,
@@ -553,6 +554,33 @@ export const systemApi = {
   /** 立即执行一轮会话自动归档，返回本次归档数量 */
   sessionArchiveNow(): Promise<number> {
     return call(() => API.SystemAPI.SessionArchiveNow());
+  },
+};
+
+// ---------- 免费额度（OpenCode 免费模型池） ----------
+
+export const ferryApi = {
+  status(): Promise<FerryStatus> {
+    return call(() => API.FerryAPI.Status());
+  },
+  /** 启用/停用：启用会在数据目录里下载并托管隔离 OpenCode 运行时 */
+  setEnabled(enabled: boolean): Promise<void> {
+    native();
+    return API.FerryAPI.SetEnabled(enabled);
+  },
+  /** 重读免费模型目录（缓存里新鲜的判定不重测） */
+  refresh(): Promise<FerryStatus> {
+    return call(() => API.FerryAPI.Refresh());
+  },
+  /** model 为空 = 检测全部；force = 忽略判定缓存 */
+  probe(model = "", force = false): Promise<FerryStatus> {
+    return call(() => API.FerryAPI.Probe(model, force));
+  },
+  setSelected(model: string, selected: boolean): Promise<FerryStatus> {
+    return call(() => API.FerryAPI.SetSelected(model, selected));
+  },
+  setSystemProxy(enabled: boolean): Promise<FerryStatus> {
+    return call(() => API.FerryAPI.SetSystemProxy(enabled));
   },
 };
 

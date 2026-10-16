@@ -202,6 +202,23 @@ func (g *Gateway) handleModels(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, item)
 	}
+	// 免费额度摆渡：已判定可用的 OpenCode 免费模型直接挂在本网关的清单上，
+	// 所有已接入的客户端都能选到它们（未启用或没有可用模型时这里为空）
+	for _, m := range g.svc.FerryAvailableModels() {
+		if !ModelAllowed(auth.models, m.ID) {
+			continue
+		}
+		item := map[string]any{
+			"id": m.ID, "object": "model", "owned_by": "opencode",
+		}
+		if m.Context > 0 {
+			item["context_length"] = m.Context
+		}
+		if m.Output > 0 {
+			item["max_output_tokens"] = m.Output
+		}
+		out = append(out, item)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": out})
 }
 
@@ -411,6 +428,12 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		msg := fmt.Sprintf("密钥「%s」无权访问模型 %s", auth.keyName, req.Model)
 		g.recordLog(auth, req.Model, http.StatusForbidden, 0, 0, 0, start, ip, req.SessionID, req.Stream, msg)
 		writeAPIError(w, http.StatusForbidden, "model_not_allowed", msg)
+		return
+	}
+	// 免费额度模型走另一条路：不经上游账号池，转交隔离 OpenCode 的 JSON 信封适配器。
+	// 分流按「本服务当前确实提供这个模型」判定，不用前缀猜。
+	if g.svc.FerryHasModel(req.Model) {
+		g.handleFerryChat(w, r, auth, req, body, start, ip)
 		return
 	}
 

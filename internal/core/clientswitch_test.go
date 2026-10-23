@@ -1,10 +1,12 @@
 package core
 
 import (
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,7 +91,7 @@ func TestBuildOfficialAuthFile_Shape(t *testing.T) {
 		t.Fatalf("refreshExpiresAt 必须在 now 之后：%v <= now %v", gotRefExpMs, nowMs)
 	}
 	oneYearMs := float64(365 * 24 * 3600 * 1000)
-	if (gotRefExpMs - nowMs) < oneYearMs-5000 || (gotRefExpMs-nowMs) > oneYearMs+5000 {
+	if (gotRefExpMs-nowMs) < oneYearMs-5000 || (gotRefExpMs-nowMs) > oneYearMs+5000 {
 		t.Fatalf("refreshExpiresAt 与 now 之差应接近 365d：差值 %v", gotRefExpMs-nowMs)
 	}
 	gotLR, ok := auth["lastRefreshTime"].(float64)
@@ -132,8 +134,8 @@ func TestBuildOfficialAuthFile_RejectBadInput(t *testing.T) {
 	}
 }
 
-// 3. 端到端：写文件后能用 ParseCredential 解析出 accessToken + uid
-//    （等于模拟官方客户端「读 → 抽出 session.auth.accessToken」走 codec 后落地）
+//  3. 端到端：写文件后能用 ParseCredential 解析出 accessToken + uid
+//     （等于模拟官方客户端「读 → 抽出 session.auth.accessToken」走 codec 后落地）
 //
 // 注：官方嵌套文件的 auth.expiresAt 单位是毫秒（OAuth Provider 的原口径），与池
 // 凭证的秒口径相差 ×1000；ParseCredential 不做单位换算，读出来就是 ms 形态。
@@ -179,8 +181,8 @@ func TestBuildOfficialAuthFile_WritableAndParsable(t *testing.T) {
 	}
 }
 
-// 4. 嵌套结构的源头兼容：池凭证如果是嵌套形（ImportCredential 容忍形态之一）也能流转
-//    ——这是为了不让 ImportCredential 后的池文件形态把切换逻辑写碎。
+//  4. 嵌套结构的源头兼容：池凭证如果是嵌套形（ImportCredential 容忍形态之一）也能流转
+//     ——这是为了不让 ImportCredential 后的池文件形态把切换逻辑写碎。
 func TestBuildOfficialAuthFile_AcceptsPoolViaUpstreamCred(t *testing.T) {
 	expiresSec := time.Now().Add(72 * time.Hour).Unix()
 	// 模拟「池里就是嵌套形态」（来自外部导入或 v5.6+ 兼容的备份）
@@ -217,4 +219,244 @@ func TestBuildOfficialAuthFile_AcceptsPoolViaUpstreamCred(t *testing.T) {
 func asString(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+//  5. 登出标记：路径口径必须与官方 asar 的 getLogoutMarkerPath 一致（`${authFile}.logged-out`），
+//     清理要同时干掉 retire 残留，且绝不能碰登录文件本身。
+//     回归背景：客户端 401 登出后写标记，启动时「Auth logout marker found, ignoring stored session」，
+//     切换流水线不清理 → 写入的凭证永远不生效（实测 5 次切换全部 userId=<empty>）。
+func TestClearLogoutMarker(t *testing.T) {
+	dir := t.TempDir()
+	authFile := filepath.Join(dir, "workbuddy-desktop.info")
+	if err := os.WriteFile(authFile, []byte(`{"account":{"uid":"u-1"}}`), 0o600); err != nil {
+		t.Fatalf("写入登录文件失败: %v", err)
+	}
+	marker := officialAuthLogoutMarker(authFile)
+	if marker != authFile+".logged-out" {
+		t.Fatalf("登出标记路径与官方不一致: %s", marker)
+	}
+	retired := marker + ".retired.1234.abc"
+	for _, p := range []string{marker, retired} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatalf("写入标记失败: %v", err)
+		}
+	}
+	if !fileExists(marker) {
+		t.Fatal("前置条件失败：标记应存在")
+	}
+	if err := clearLogoutMarker(authFile); err != nil {
+		t.Fatalf("清理登出标记失败: %v", err)
+	}
+	if fileExists(marker) || fileExists(retired) {
+		t.Fatal("登出标记或 retire 残留未被清理")
+	}
+	if !fileExists(authFile) {
+		t.Fatal("登录文件被误删")
+	}
+	// 幂等：没有标记时也算成功
+	if err := clearLogoutMarker(authFile); err != nil {
+		t.Fatalf("重复清理应幂等: %v", err)
+	}
+}
+
+// newSessionTestRoot 造一个最小客户端数据根：projects/{ws}/*.jsonl + workbuddy.db
+// （列对齐真实 schema 的核心子集）+ edge-sync-mapping-v4.db。
+func newSessionTestRoot(t *testing.T) (root string) {
+	t.Helper()
+	root = t.TempDir()
+	ws := filepath.Join(root, "projects", "Users-me-work")
+	if err := os.MkdirAll(ws, 0o700); err != nil {
+		t.Fatalf("建 projects 目录失败: %v", err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, "workbuddy.db"))
+	if err != nil {
+		t.Fatalf("建库失败: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE sessions (
+		id TEXT PRIMARY KEY, cwd TEXT NOT NULL, user_id TEXT NOT NULL, title TEXT,
+		transport TEXT NOT NULL DEFAULT 'local',
+		created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER)`); err != nil {
+		t.Fatalf("建 sessions 表失败: %v", err)
+	}
+	rows := []struct {
+		id, cwd, uid, transport string
+	}{
+		{"s-a1", "/Users/me/work", "uid-a", "local"},
+		{"s-a2", "/Users/me/work", "uid-a", "local"},
+		{"s-claw", "/Users/me/WorkBuddy/Claw", "uid-a", "local"}, // Claw 工作区不克隆
+		{"s-a3", "/Users/me/work", "uid-a", "cloud"},             // 云端会话归服务端
+		{"s-b1", "/Users/me/work", "uid-b", "local"},
+	}
+	for _, r := range rows {
+		if _, err := db.Exec(`INSERT INTO sessions(id, cwd, user_id, transport, created_at, updated_at)
+			VALUES(?,?,?,?,1000,2000)`, r.id, r.cwd, r.uid, r.transport); err != nil {
+			t.Fatalf("插数据失败: %v", err)
+		}
+		body := `{"sessionId":"` + r.id + `","role":"user","text":"hi ` + r.id + `"}`
+		if err := os.WriteFile(filepath.Join(ws, r.id+".jsonl"), []byte(body), 0o600); err != nil {
+			t.Fatalf("写正文失败: %v", err)
+		}
+	}
+	edge, err := sql.Open("sqlite", filepath.Join(root, "edge-sync-mapping-v4.db"))
+	if err != nil {
+		t.Fatalf("建映射库失败: %v", err)
+	}
+	defer edge.Close()
+	if _, err := edge.Exec(`CREATE TABLE edge_sync_mapping (
+		session_id TEXT NOT NULL PRIMARY KEY, conversation_id TEXT NOT NULL UNIQUE,
+		msg_channel TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL)`); err != nil {
+		t.Fatalf("建映射表失败: %v", err)
+	}
+	return root
+}
+
+func countSessions(t *testing.T, dbPath, uid, transport string) int {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		t.Fatalf("打开库失败: %v", err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE user_id=? AND transport=?`,
+		uid, transport).Scan(&n); err != nil {
+		t.Fatalf("统计失败: %v", err)
+	}
+	return n
+}
+
+// 6. 会话克隆：源账号会话原样保留，目标账号拿到新 id 的副本
+//（正文 jsonl + sessions 行 + edge-sync 云端映射三件套齐备，云端/Claw 不复制）
+func TestCloneClientSessionsAt(t *testing.T) {
+	root := newSessionTestRoot(t)
+	dbPath := filepath.Join(root, "workbuddy.db")
+	backupDir := filepath.Join(root, "clientswitch")
+
+	n, err := cloneClientSessionsAt(root, backupDir, "uid-a", "uid-b")
+	if err != nil {
+		t.Fatalf("克隆失败: %v", err)
+	}
+	if n != 2 { // s-a1 / s-a2；Claw 与云端会话不克隆
+		t.Fatalf("应克隆 2 条，实际 %d", n)
+	}
+	// 源账号一条不少（这是与「改归属」迁移的本质差别）
+	if left := countSessions(t, dbPath, "uid-a", "local"); left != 3 {
+		t.Fatalf("源账号本地会话应保持 3 条（含 Claw），实际 %d", left)
+	}
+	if got := countSessions(t, dbPath, "uid-b", "local"); got != 3 {
+		t.Fatalf("目标账号应有 3 条本地会话（1 原有 + 2 克隆），实际 %d", got)
+	}
+	// 云端行归属不变
+	if got := countSessions(t, dbPath, "uid-a", "cloud"); got != 1 {
+		t.Fatalf("云端会话不应被复制，uid-a 云端行应为 1，实际 %d", got)
+	}
+
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		t.Fatalf("重开库失败: %v", err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT id, deleted_at FROM sessions WHERE user_id='uid-b' AND id LIKE '%-%-%-%-%'`)
+	if err != nil {
+		t.Fatalf("查询克隆行失败: %v", err)
+	}
+	var newIDs []string
+	for rows.Next() {
+		var id string
+		var deleted sql.NullInt64
+		if err := rows.Scan(&id, &deleted); err != nil {
+			t.Fatalf("扫描失败: %v", err)
+		}
+		if _, perr := uuid.Parse(id); perr != nil {
+			t.Fatalf("克隆 id 必须是带连字符的 UUID: %s", id)
+		}
+		if deleted.Valid {
+			t.Fatalf("克隆行 deleted_at 应为空: %s", id)
+		}
+		newIDs = append(newIDs, id)
+	}
+	rows.Close()
+	if len(newIDs) != 2 {
+		t.Fatalf("应有 2 条 UUID 克隆行，实际 %d", len(newIDs))
+	}
+
+	// 正文：新 jsonl 存在且内部 id 已替换；源正文未动
+	for _, nid := range newIDs {
+		p := filepath.Join(root, "projects", "Users-me-work", nid+".jsonl")
+		raw, rerr := os.ReadFile(p)
+		if rerr != nil {
+			t.Fatalf("克隆正文缺失 %s: %v", nid, rerr)
+		}
+		if !strings.Contains(string(raw), nid) || !strings.Contains(string(raw), `"sessionId":"`+nid+`"`) {
+			t.Fatalf("克隆正文应已替换为新 id: %s", string(raw))
+		}
+	}
+	srcRaw, _ := os.ReadFile(filepath.Join(root, "projects", "Users-me-work", "s-a1.jsonl"))
+	if !strings.Contains(string(srcRaw), "s-a1") {
+		t.Fatalf("源正文不应被改写: %s", string(srcRaw))
+	}
+
+	// 云端映射：两条新会话都归属目标账号
+	edge, err := sql.Open("sqlite", "file:"+filepath.Join(root, "edge-sync-mapping-v4.db")+"?mode=ro")
+	if err != nil {
+		t.Fatalf("打开映射库失败: %v", err)
+	}
+	defer edge.Close()
+	for _, nid := range newIDs {
+		var channel string
+		if err := edge.QueryRow(`SELECT msg_channel FROM edge_sync_mapping WHERE session_id=?`, nid).Scan(&channel); err != nil {
+			t.Fatalf("新会话未登记云端映射 %s: %v", nid, err)
+		}
+		if channel != "convmsg:uid-b" {
+			t.Fatalf("云端映射渠道应为 convmsg:uid-b，实际 %s", channel)
+		}
+	}
+
+	// 快照存在且可打开（克隆前状态：uid-a 本地 3 条）
+	snaps, _ := filepath.Glob(filepath.Join(backupDir, "sessions-*.db"))
+	if len(snaps) != 1 {
+		t.Fatalf("应生成 1 份会话库快照，实际 %d", len(snaps))
+	}
+	snap, err := sql.Open("sqlite", snaps[0])
+	if err != nil {
+		t.Fatalf("快照打不开: %v", err)
+	}
+	defer snap.Close()
+	var c int
+	if err := snap.QueryRow(`SELECT COUNT(*) FROM sessions WHERE user_id='uid-a'`).Scan(&c); err != nil {
+		t.Fatalf("读快照失败: %v", err)
+	}
+	if c != 4 { // 3 local + 1 cloud
+		t.Fatalf("快照应是克隆前状态（uid-a 4 条），实际 %d", c)
+	}
+}
+
+// 7. 克隆边界：同账号 / 空 uid / 库不存在 都应静默成功；缺 projects/ 明确报错
+func TestCloneClientSessionsAt_Noop(t *testing.T) {
+	root := newSessionTestRoot(t)
+	if n, err := cloneClientSessionsAt(root, t.TempDir(), "uid-a", "uid-a"); err != nil || n != 0 {
+		t.Fatalf("同账号应为空操作: n=%d err=%v", n, err)
+	}
+	if n, err := cloneClientSessionsAt(root, t.TempDir(), "", "uid-b"); err != nil || n != 0 {
+		t.Fatalf("空来源应为空操作: n=%d err=%v", n, err)
+	}
+	missing := t.TempDir()
+	if n, err := cloneClientSessionsAt(missing, t.TempDir(), "uid-a", "uid-b"); err != nil || n != 0 {
+		t.Fatalf("库不存在应为空操作: n=%d err=%v", n, err)
+	}
+
+	// 有库但缺 projects/：拒绝（不写只有元数据没有正文的半成品会话）
+	half := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(half, "workbuddy.db"))
+	if err != nil {
+		t.Fatalf("建库失败: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT, user_id TEXT, transport TEXT)`); err != nil {
+		t.Fatalf("建表失败: %v", err)
+	}
+	db.Close()
+	if _, err := cloneClientSessionsAt(half, t.TempDir(), "uid-a", "uid-b"); err == nil {
+		t.Fatal("缺 projects/ 时应明确报错")
+	}
 }

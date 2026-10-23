@@ -568,27 +568,42 @@ func (s *Scheduler) execute(taskType string, a Account) TaskRunDetail {
 		}
 	}
 
-	switch taskType {
-	case TaskCheckin:
-		return s.doCheckin(a)
-	case TaskTravel:
-		return s.doTravel(a)
-	case TaskActivity, TaskSchool, TaskCat:
-		cred, err := LoadUpstreamCred(s.svc.AuthDir(), a.Credential)
-		if err != nil {
-			return TaskRunDetail{UID: a.UID, Status: TaskFailed, Message: "凭证读取失败: " + err.Error()}
-		}
+	runOnce := func() TaskRunDetail {
 		switch taskType {
-		case TaskActivity:
-			return s.doActivity(a, cred)
-		case TaskSchool:
-			return s.doSchool(a, cred)
+		case TaskCheckin:
+			return s.doCheckin(a)
+		case TaskTravel:
+			return s.doTravel(a)
+		case TaskActivity, TaskSchool, TaskCat:
+			cred, err := LoadUpstreamCred(s.svc.AuthDir(), a.Credential)
+			if err != nil {
+				return TaskRunDetail{UID: a.UID, Status: TaskFailed, Message: "凭证读取失败: " + err.Error()}
+			}
+			switch taskType {
+			case TaskActivity:
+				return s.doActivity(a, cred)
+			case TaskSchool:
+				return s.doSchool(a, cred)
+			default:
+				return s.doCat(a, cred)
+			}
 		default:
-			return s.doCat(a, cred)
+			return TaskRunDetail{UID: a.UID, Status: TaskSkipped, Message: "未知任务类型：" + taskType}
 		}
-	default:
-		return TaskRunDetail{UID: a.UID, Status: TaskSkipped, Message: "未知任务类型：" + taskType}
 	}
+	det := runOnce()
+	// 网关 401：本地 expiresAt 未到但上游已吊销 AT（官方侧 token 轮换等），
+	// 临期触发的续期永远等不到触发点 → 把 401 当作强制续期信号，刷新成功即重试一次
+	// （对齐网关 chat 链路的 401 刷新重试语义）。
+	if det.Status == TaskFailed && a.HasRefresh && isAuthRejectedMessage(det.Message) {
+		if rd, ok := s.tryRefresh(a); !ok {
+			rd.Message = "上游 401 后自动续期失败：" + rd.Message
+			return rd
+		}
+		det = runOnce()
+		det.Message = "token 已被上游吊销，自动续期后重试；" + det.Message
+	}
+	return det
 }
 
 // doTravel 猫猫旅行巡检状态机（单账号单趟：查猫 + 查状态 + 最多一个动作）。
@@ -733,7 +748,23 @@ func (s *Scheduler) doKeepalive(a Account) TaskRunDetail {
 		left := time.Until(time.Unix(cred.ExpiresAtUnix, 0))
 		if left > expiringSoonWindow {
 			msg := fmt.Sprintf("token 有效期充足（剩余 %d 小时），本次未刷新", int(left.Hours()))
-			if note := s.refreshBalance(a, cred); note != "" {
+			note := s.refreshBalance(a, cred)
+			if isAuthRejectedMessage(note) {
+				// 本地未到期但上游 401：AT 已被吊销（本地 expiresAt 是假时钟），
+				// 强制续期一次并用新 token 重查余额，否则死 token 会一直用到本地假到期
+				if rd, ok := s.tryRefresh(a); !ok {
+					return TaskRunDetail{UID: a.UID, Status: TaskFailed,
+						Message: "上游 401 后自动续期失败：" + rd.Message}
+				}
+				nc, lerr := LoadUpstreamCred(s.svc.AuthDir(), a.Credential)
+				if lerr != nil {
+					return TaskRunDetail{UID: a.UID, Status: TaskFailed, Message: "续期后凭证读取失败: " + lerr.Error()}
+				}
+				cred = nc
+				msg = fmt.Sprintf("本地有效期未到但上游已拒绝（401），token 已自动续期（原剩余 %d 小时为假时钟）", int(left.Hours()))
+				note = s.refreshBalance(a, cred)
+			}
+			if note != "" {
 				msg += "；" + note
 			}
 			if note := s.refreshModels(a, cred); note != "" {

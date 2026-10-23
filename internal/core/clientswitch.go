@@ -1,6 +1,7 @@
 package core
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -21,6 +22,11 @@ import (
 //   2. 退出官方客户端
 //   3. 把账号池中目标账号的凭证写入官方固定登录位（原子写，0600）
 //   4. 重新启动客户端，写入的账号即当前登录
+//
+// 两个必做补丁（否则写入等于没写 / 会话丢失）：
+//   - 清 `<登录位>.logged-out`：客户端登出时写的标记，启动恢复见它直接判未登录；
+//   - 克隆会话到目标账号（clientsession_clone.go）：客户端侧边栏按账号过滤，
+//     不克隆则新登录账号看不到当前账号的历史会话。
 //
 // 防御逻辑（对齐 WorkDaddy resolveAuthTarget 的校验思路）：
 //   - 跨通道拒绝：官方当前登录与目标账号 realm 不同（国内/国际）时拒绝切换；
@@ -98,6 +104,9 @@ type ClientSwitchPrecheck struct {
 	ClientPath       string `json:"clientPath"`
 	ClientRunning    bool   `json:"clientRunning"`
 	BackupDir        string `json:"backupDir"`
+	CurrentUID       string `json:"currentUid,omitempty"`    // 官方当前登录 uid（明文，取不到为空）
+	LogoutMarker     bool   `json:"logoutMarker"`            // 存在客户端登出标记（启动时会忽略登录文件）
+	LocalSessions    int    `json:"localSessions,omitempty"` // 当前账号可迁移的本地会话数
 	Warnings         string `json:"warnings,omitempty"`
 }
 
@@ -117,10 +126,24 @@ func (s *Service) ClientSwitchPrecheck(uid string) (*ClientSwitchPrecheck, error
 	pre.OfficialAuthFile = authFile
 	if raw, err := os.ReadFile(authFile); err == nil {
 		pre.OfficialExists = true
+		pre.CurrentUID = clientSessionUID(raw)
 		if c, perr := ParseCredential(authFile, raw); perr == nil && c != nil {
 			pre.OfficialRealm = c.Realm
 		} else {
 			pre.Warnings = joinWarn(pre.Warnings, "官方登录文件存在但无法解析——为保护现有登录，本次切换将拒绝执行")
+		}
+	}
+	// 客户端登出时会留下 <登录位>.logged-out，启动恢复逻辑见到它就直接判未登录，
+	// 因此切换必须顺手清理，否则写入的凭证永远不生效。
+	pre.LogoutMarker = fileExists(officialAuthLogoutMarker(authFile))
+	if pre.LogoutMarker {
+		pre.Warnings = joinWarn(pre.Warnings, "官方客户端处于登出状态（存在登出标记），切换时会自动清理")
+	}
+	if pre.CurrentUID != "" && pre.CurrentUID != uid {
+		pre.LocalSessions = clientLocalSessionCount(pre.CurrentUID)
+		if pre.LocalSessions > 0 && !clientSessionCloneSupportedAt(workbuddyRoot()) {
+			pre.Warnings = joinWarn(pre.Warnings,
+				"客户端数据目录缺少 projects/ 或 sessions 表，本次切换不会克隆会话（目标账号看不到当前账号的历史会话）")
 		}
 	}
 	if pre.OfficialRealm != "" && pre.TargetRealm != "" && pre.OfficialRealm != pre.TargetRealm {
@@ -151,6 +174,62 @@ func (s *Service) clientSwitchBackupDir() string {
 	return filepath.Join(filepath.Dir(s.ConfigPath()), "clientswitch")
 }
 
+// officialAuthLogoutMarker 客户端登出标记路径（官方 asar：getLogoutMarkerPath = `${authFile}.logged-out`）。
+// 客户端退出登录时写入，启动恢复时存在即忽略登录位文件。
+func officialAuthLogoutMarker(authFile string) string {
+	return authFile + ".logged-out"
+}
+
+// clearLogoutMarker 删除登出标记（及其 retire 残留），无标记时视为成功。
+func clearLogoutMarker(authFile string) error {
+	marker := officialAuthLogoutMarker(authFile)
+	if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// retireLogoutMarker 会重命名为 <marker>.retired.<pid>.<uuid> 再删除，异常退出可能留残留
+	if matches, err := filepath.Glob(marker + ".retired.*"); err == nil {
+		for _, p := range matches {
+			_ = os.Remove(p)
+		}
+	}
+	return nil
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
+// clientLocalSessionCount 统计某账号名下可迁移的本地会话数（云端会话归服务端，不迁移）。
+func clientLocalSessionCount(uid string) int {
+	return clientLocalSessionCountAt(workbuddyDBPath(), uid)
+}
+
+func clientLocalSessionCountAt(dbPath, uid string) int {
+	if uid == "" {
+		return 0
+	}
+	if _, err := os.Stat(dbPath); err != nil {
+		return 0
+	}
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(3000)")
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sessions WHERE user_id = ? AND transport = 'local'`, uid).Scan(&n); err != nil {
+		return 0
+	}
+	return n
+}
+
+// migrateClientSessions 旧实现（把 fromUID 名下的本地会话改归属到 toUID）已被
+// 会话克隆取代：改归属会把源账号会话整批搬走，切回来就没了。克隆实现见
+// clientsession_clone.go 的 cloneClientSessions —— 源账号原样保留，只给目标账号
+// 一份新 id 的副本（正文 jsonl + sessions 行 + edge-sync 云端映射）。
+
 // ClientSwitchAccount 执行切换四步流水线，每步发进度事件。同步执行（整体约 5-10 秒）。
 func (s *Service) ClientSwitchAccount(uid string) error {
 	acc, ok := s.FindAccount(uid)
@@ -174,12 +253,13 @@ func (s *Service) ClientSwitchAccount(uid string) error {
 
 	// 1. 备份官方当前登录文件
 	switchStep("backup", "备份官方当前登录文件")
+	backup := ""
 	if pre.OfficialExists {
 		dir := s.clientSwitchBackupDir()
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("创建备份目录失败: %w", err)
 		}
-		backup := filepath.Join(dir, fmt.Sprintf("backup-%s.info", time.Now().Format("20060102-150405")))
+		backup = filepath.Join(dir, fmt.Sprintf("backup-%s.info", time.Now().Format("20060102-150405")))
 		raw, err := os.ReadFile(pre.OfficialAuthFile)
 		if err != nil {
 			return fmt.Errorf("读取官方登录文件失败: %w", err)
@@ -221,14 +301,69 @@ func (s *Service) ClientSwitchAccount(uid string) error {
 		return fmt.Errorf("替换登录文件失败: %w", err)
 	}
 
+	// 3.1 保留会话：把当前账号名下的本地会话克隆一份给目标账号（新 id + 正文 +
+	// 云端映射），源账号会话原样保留——否则切换后侧边栏按 user_id 过滤，原账号的
+	// 历史会话全部不可见；而「改归属」式迁移会让源账号永久失去这些会话。
+	// 失败则回滚登录位（此时客户端已停止，回滚 = 恢复原文），避免「会话归 B、登录仍是 A」的错位。
+	if pre.CurrentUID != "" && pre.CurrentUID != uid && pre.LocalSessions > 0 {
+		switchStep("sessions", fmt.Sprintf("克隆当前账号的 %d 个会话到 %s（源账号会话保留）", pre.LocalSessions, acc.Nickname))
+		n, merr := s.cloneClientSessions(pre.CurrentUID, uid)
+		if merr != nil {
+			if backup != "" {
+				if raw, rerr := os.ReadFile(backup); rerr == nil {
+					_ = os.WriteFile(pre.OfficialAuthFile, raw, 0o600)
+				}
+			}
+			return fmt.Errorf("克隆会话失败（登录位已回滚）: %w", merr)
+		}
+		switchStep("sessions", fmt.Sprintf("已克隆 %d 个会话", n))
+	}
+
+	// 3.2 清理登出标记：客户端退出登录会写 <登录位>.logged-out，启动恢复时
+	// 只要它存在就直接判未登录（log: Auth logout marker found, ignoring stored session），
+	// 不清理的话本节写入的凭证永远不会生效。
+	if err := clearLogoutMarker(pre.OfficialAuthFile); err != nil {
+		return fmt.Errorf("清理登录登出标记失败: %w", err)
+	}
+
 	// 4. 重新启动客户端（带 CDP 端口，避免切换后再次注入时强杀）
 	switchStep("start", "重新启动官方客户端")
 	if err := startOfficialClient(pre.ClientPath, s.GetConfig().Inject.Port); err != nil {
 		return fmt.Errorf("启动客户端失败: %w（登录文件已写入，可手动打开客户端）", err)
 	}
-	switchStep("done", "切换完成，客户端将以 "+acc.Nickname+" 的身份启动")
+	// 5. 确认登录真的生效：客户端启动后会自己 store()/refresh()，
+	// 若凭证不被接受（刷新 401），它会立刻 clean() 并重新写登出标记——
+	// 只看「进程起来了」就报成功，正是「写了文件但界面仍未登录」的来源。
+	switchStep("verify", "确认客户端登录态")
+	if err := verifyClientSession(pre.OfficialAuthFile, uid, 20*time.Second); err != nil {
+		return fmt.Errorf("登录文件已写入，但客户端启动后仍未登录：%w；备份在 %s", err, s.clientSwitchBackupDir())
+	}
+	switchStep("done", "切换完成，客户端已以 "+acc.Nickname+" 的身份登录")
 	s.Store().Audit("client.switch", uid, "official="+pre.OfficialAuthFile)
 	return nil
+}
+
+// verifyClientSession 在客户端重启后核对登录态。
+// 判据只有一条可靠信号：客户端若拒绝该凭证，会在启动阶段 clean() 并写回 <登录位>.logged-out。
+// 因此轮询该标记出现即判失败；等到 wait 结束仍未出现，视为登录成功（客户端可能不重写文件，
+// 不能用 mtime 当成功依据）。
+func verifyClientSession(authFile, uid string, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
+	for {
+		if fileExists(officialAuthLogoutMarker(authFile)) {
+			return fmt.Errorf("客户端启动后重新出现登出标记（accessToken/refreshToken 被拒绝或已过期）")
+		}
+		if raw, err := os.ReadFile(authFile); err == nil {
+			// 客户端把文件改写成了别的账号，说明有另一个会话覆盖了本次写入
+			if got := clientSessionUID(raw); got != "" && got != uid {
+				return fmt.Errorf("登录位被改写成账号 %s", got)
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return nil
+		}
+		time.Sleep(400 * time.Millisecond)
+	}
 }
 
 // buildOfficialAuthFile 从池里的 UpstreamCred 构造 WorkBuddy v5.6+ 客户端期望的
@@ -269,18 +404,18 @@ func buildOfficialAuthFile(cred *UpstreamCred, nickname string) ([]byte, error) 
 	}
 
 	auth := map[string]any{
-		"accessToken":       cred.AccessToken,
-		"refreshToken":      cred.RefreshToken,
-		"tokenType":         "Bearer",
-		"domain":            cred.Domain,
-		"expiresAt":         expiresMs,       // ms
-		"expiresIn":         expiresIn,       // sec，剩余秒（≤0 视为已过期）
-		"refreshExpiresIn":  refreshLifetimeSec,
-		"refreshExpiresAt":  refreshExpMs,    // ms
-		"lastRefreshTime":   nowMs,           // ms，官方按当前时间更新
-		"scope":             "openid profile offline_access email",
-		"sessionState":      uuid.NewString(),
-		"notBeforePolicy":   nowSec,
+		"accessToken":      cred.AccessToken,
+		"refreshToken":     cred.RefreshToken,
+		"tokenType":        "Bearer",
+		"domain":           cred.Domain,
+		"expiresAt":        expiresMs, // ms
+		"expiresIn":        expiresIn, // sec，剩余秒（≤0 视为已过期）
+		"refreshExpiresIn": refreshLifetimeSec,
+		"refreshExpiresAt": refreshExpMs, // ms
+		"lastRefreshTime":  nowMs,        // ms，官方按当前时间更新
+		"scope":            "openid profile offline_access email",
+		"sessionState":     uuid.NewString(),
+		"notBeforePolicy":  nowSec,
 	}
 
 	account := map[string]any{
@@ -444,6 +579,10 @@ func (s *Service) ClientRestoreAuthBackup(raw []byte) error {
 	}
 	if err := os.Rename(tmp, authFile); err != nil {
 		return fmt.Errorf("替换登录文件失败: %w", err)
+	}
+	// 同样要清登出标记，否则恢复后的登录仍会被客户端忽略
+	if err := clearLogoutMarker(authFile); err != nil {
+		return fmt.Errorf("清理登录登出标记失败: %w", err)
 	}
 
 	// 重启客户端

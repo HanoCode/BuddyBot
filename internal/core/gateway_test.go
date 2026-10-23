@@ -1022,6 +1022,81 @@ func TestSchedulerCheckinAlreadyDone(t *testing.T) {
 	}
 }
 
+// fakeAuthGateUpstream 伪上游：除 refresh 外所有端点在旧 token 下返回网关 401 HTML
+// （对齐 APISIX 网关层拒绝形态），新 token（at-refreshed）下放行。
+func fakeAuthGateUpstream(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v2/plugin/auth/token/refresh":
+			_, _ = w.Write([]byte(`{"accessToken":"at-refreshed","refreshToken":"rt-new","expiresIn":5184000,"domain":"codebuddy.cn"}`))
+		default:
+			if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") != "at-refreshed" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`<html><head><title>401 Authorization Required</title></head><center><h1>401 Authorization Required</h1></center><hr><center>openresty</center></html>`))
+				return
+			}
+			switch r.URL.Path {
+			case "/v2/billing/meter/daily-checkin":
+				_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
+			case "/v2/billing/meter/get-user-resource":
+				_, _ = w.Write([]byte(`{"code":0,"msg":"ok","data":{"Response":{"Data":{"Accounts":[{"CapacityRemain":100,"CapacityUsed":0,"CapacitySize":100,"CycleEndTime":"2027-01-01 00:00:00"}]}}}}`))
+			default:
+				http.NotFound(w, r)
+			}
+		}
+	}))
+}
+
+// 回归背景：官方侧 token 轮换会提前吊销 AT，而本地 expiresAt 仍显示充足 →
+// 临期触发的续期永远不执行，任务全部 401。401 必须被当作强制续期信号。
+func TestSchedulerCheckin401RefreshesAndRetries(t *testing.T) {
+	svc := newTestService(t)
+	seedCredential(t, svc.AuthDir(), "u_ck401", 30*24*time.Hour) // 本地说有效期充足
+	up := fakeAuthGateUpstream(t)
+	defer up.Close()
+	pointUpstreamAt(t, svc, up)
+
+	run := svc.Scheduler().RunFor(TaskCheckin, "manual", nil)
+	if run.Success != 1 {
+		t.Fatalf("签到 401 后应自动续期并重试成功: %+v", run)
+	}
+	if !strings.Contains(run.Details[0].Message, "自动续期") {
+		t.Fatalf("消息应说明已自动续期: %+v", run.Details[0])
+	}
+	cred, err := LoadUpstreamCred(svc.AuthDir(), "workbuddy-u_ck401.json")
+	if err != nil {
+		t.Fatalf("读回凭证失败: %v", err)
+	}
+	if cred.AccessToken != "at-refreshed" || cred.RefreshToken != "rt-new" {
+		t.Fatalf("凭证应写回刷新后的 token: at=%s rt=%s", cred.AccessToken, cred.RefreshToken)
+	}
+}
+
+func TestSchedulerKeepalive401ForcesRefresh(t *testing.T) {
+	svc := newTestService(t)
+	seedCredential(t, svc.AuthDir(), "u_ka401", 30*24*time.Hour) // 本地说有效期充足
+	up := fakeAuthGateUpstream(t)
+	defer up.Close()
+	pointUpstreamAt(t, svc, up)
+
+	run := svc.Scheduler().RunFor(TaskKeepalive, "manual", nil)
+	if run.Success != 1 {
+		t.Fatalf("keepalive 余额 401 后应强制续期成功: %+v", run)
+	}
+	if !strings.Contains(run.Details[0].Message, "自动续期") {
+		t.Fatalf("消息应说明已强制续期: %+v", run.Details[0])
+	}
+	cred, err := LoadUpstreamCred(svc.AuthDir(), "workbuddy-u_ka401.json")
+	if err != nil {
+		t.Fatalf("读回凭证失败: %v", err)
+	}
+	if cred.AccessToken != "at-refreshed" {
+		t.Fatalf("凭证应写回刷新后的 token: %+v", cred)
+	}
+}
+
 // ---- 猫猫旅行 / 连登奖励 / 余额刷新 / 会话粘性 / tool_calls 聚合 ----
 
 // growthFake 可变的 growth 域伪上游（信封 {code,msg,data}）。

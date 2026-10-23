@@ -669,7 +669,7 @@ export default function Accounts() {
     const ok = await confirmDialog({
       title: t("设为客户端登录"),
       desc: t(
-        "将备份官方登录文件 → 退出官方客户端 → 写入 {name} 的登录凭证 → 重启客户端。当前客户端会话会被关闭，请先保存工作。",
+        "将备份官方登录文件 → 退出官方客户端 → 克隆当前账号的会话到 {name}（源账号会话保留，自动备份会话库）→ 写入登录凭证并清理登出标记 → 重启客户端。当前客户端窗口会被关闭，请先保存工作。",
         { name: acc.nickname || acc.uid },
       ),
       danger: false,

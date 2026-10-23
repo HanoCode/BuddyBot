@@ -645,6 +645,15 @@ func isRefreshRejectedBody(body string) bool {
 		strings.Contains(lower, "session not found")
 }
 
+// isAuthRejectedMessage 判定任务错误消息是否为网关层 401 拒绝（AT 已被上游
+// 吊销/失效，本地 expiresAt 是假时钟）。任务链路的错误以字符串形态上抛
+// （TaskRunDetail.Message），两类指纹：
+//   - 签到链路：「签到被上游拒绝（401）…」（dailyCheckin 的 fmt 口径）
+//   - 信封链路：「HTTP 401: …」（doEnvelope / doJSON 的 upstreamAPIError 口径）
+func isAuthRejectedMessage(msg string) bool {
+	return strings.Contains(msg, "（401）") || strings.Contains(msg, "HTTP 401: ")
+}
+
 // upstreamErrKind 上游错误类别（对齐参考实现 ErrKind 的核心子集）。
 type upstreamErrKind string
 
